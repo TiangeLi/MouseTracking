@@ -1,0 +1,703 @@
+# coding=utf-8
+
+"""Processes CV2 Coordinates into paths and heatmap"""
+
+import sys
+import cv2
+import time
+import numpy as np
+from collections import deque
+import threading as thr
+import multiprocessing as mp
+from Misc.GlobalVars import *
+from Misc.CustomFunctions import format_secs
+from Misc.CustomClasses import StoppableProcess, ReadMessage, StopWatch, NewMessage
+from GUI.DataDisplays.SendRecvProtocols import SyncableMPArray
+from Concurrency.CV2Proc import CV2TargetAreaPerimeter
+if sys.version[0] == '2':
+    import Queue as Queue
+else:
+    import queue as Queue
+
+
+class ProgressBar(object):
+    """Numpy Array based progress bar"""
+    def __init__(self, initial_duration):
+        self.mp_array = SyncableMPArray((PROGBAR_HEIGHT, *VID_DIM_RGB[1:]))
+        # -- Constants -- #
+        # Total segments in progress bar (= horizontal length)
+        self.num_steps = VID_DIM_RGB[1]
+        # Text Constants
+        self.font = cv2.FONT_HERSHEY_SIMPLEX
+        self.text_vloc = 15
+        self.text_size = 0.45
+        self.text_thickness = 1
+        self.text_dims = cv2.getTextSize('00:00.000', self.font, self.text_size, self.text_thickness)[0]
+        spacing = self.text_dims[0] // 2
+        self.txt_left_lmt = spacing
+        self.txt_right_lmt = self.num_steps - spacing
+        # -- Main thread vars -- #
+        # Operation Params
+        self.curr_loc = -1
+        self.text_hloc = 0
+        self.start_time = None
+        self.output_array = None
+        self.image = None
+        self.targ_perim = CV2TargetAreaPerimeter()
+        # Progress bar segments for each element
+        self.pbar_slice = None
+        self.mouse_in_targ_slice = None
+        self.mouse_stim_slice = None
+        # Mouse Status
+        self.mouse_in_target = False
+        self.mouse_recv_stim = False
+        self.mouse_stim_timer = None
+        self.in_targ_stopwatch = StopWatch()
+        self.get_stim_stopwatch = StopWatch()
+        self.mouse_n_entries = 0
+        self.mouse_n_stims = 0
+        # -- Modifier vars (read-only for main thread) -- #
+        # Operation Params
+        self._start = False
+        self._running = False
+        self._duration = initial_duration
+
+    # Initializing functions. Call once once new process starts
+    def init_unpickleable_objs(self):
+        """These objects must be created in the process they will run in"""
+        self.output_array = self.mp_array.generate_np_array()
+        self.image = self.output_array.copy()
+        # Progress bar slices
+        self.pbar_slice = self.image[20:60, :, :1]
+        self.mouse_in_targ_slice = self.image[20:40, :, 1:2]
+        self.mouse_stim_slice = self.image[40:60, :, 2:3]
+        # Text slices
+        w, h = self.text_dims
+        self.main_timer_slice = self.image[:self.text_vloc+5, :, :]
+        self.targ_timer_slice = self.image[92-h:92+5, 95:95+w, :]
+        self.stim_timer_slice = self.image[92-h:92+5, 411:411+w, :]
+        self.targ_count_slice = self.image[92-h:92+5, 256:256+int(w*3/4), :]
+        self.stim_count_slice = self.image[92-h:92+5, 563:563+int(w*3/4), :]
+        # Set Progress bar to initial conditions
+        self.reset_bar()
+
+    # Modifier Functions. Can call from other threads
+    # *** Non-underscored variables are READ ONLY
+    def set_duration(self, duration_in_secs):
+        self._duration = float(duration_in_secs)
+
+    def set_start(self):
+        self._start = True
+
+    def set_stop(self):
+        self._running = False
+
+    # Main Update Function. Run in Main Thread. Do NOT call from any other thread
+    # *** Underscored variables are READ ONLY
+    def set_timer_text(self, reset):
+        """Places cv2 text on output array"""
+        if reset:
+            main_timer = '00:00.000'
+            mouse_in_region_timer = '00:00.000'
+            mouse_recv_stim_timer = '00:00.000'
+            num_entries = '0)'
+            num_stims = '0)'
+        else:
+            main_timer = format_secs(time.perf_counter() - self.start_time, 'with_ms')
+            mouse_in_region_timer = format_secs(self.in_targ_stopwatch.elapsed(), 'with_ms')
+            mouse_recv_stim_timer = format_secs(self.get_stim_stopwatch.elapsed(), 'with_ms')
+            num_entries = str(self.mouse_n_entries) + ')'
+            num_stims = str(self.mouse_n_stims) + ')'
+        self.main_timer_slice.fill(0)
+        self.targ_timer_slice.fill(0)
+        self.stim_timer_slice.fill(0)
+        self.targ_count_slice.fill(0)
+        self.stim_count_slice.fill(0)
+        cv2.putText(self.main_timer_slice, main_timer, (self.text_hloc, self.text_vloc),
+                    fontFace=self.font, fontScale=self.text_size, color=(255, 255, 255))
+        cv2.putText(self.targ_timer_slice, mouse_in_region_timer, (0, self.text_dims[1]),
+                    fontFace=self.font, fontScale=self.text_size, color=(255, 255, 255))
+        cv2.putText(self.stim_timer_slice, mouse_recv_stim_timer, (0, self.text_dims[1]),
+                    fontFace=self.font, fontScale=self.text_size, color=(255, 255, 255))
+        cv2.putText(self.targ_count_slice, num_entries, (0, self.text_dims[1]),
+                    fontFace=self.font, fontScale=self.text_size, color=(255, 255, 255))
+        cv2.putText(self.stim_count_slice, num_stims, (0, self.text_dims[1]),
+                    fontFace=self.font, fontScale=self.text_size, color=(255, 255, 255))
+        # Image is now fully prepared, send
+        self.output_array.send_img(self.image)
+
+    def check_mouse_inside_target(self, coord):
+        """Checks if mouse is inside target region"""
+        x, y = coord
+        self.mouse_in_target = False
+        if not self.targ_perim.draw or coord == (None, None):
+            return
+        cx, cy = self.targ_perim.x, self.targ_perim.y
+        if ((x-cx)**2 + (y-cy)**2) <= self.targ_perim.radius**2:
+            self.mouse_in_target = True
+
+    def send_stim_to_mouse(self):
+        """Stim mouse if inside region"""
+        if self.mouse_stim_timer:
+            elapsed = time.perf_counter() - self.mouse_stim_timer
+            if 0.5 > elapsed:
+                return
+            elif 0.5 <= elapsed < 3:
+                self.mouse_recv_stim = False
+                return
+            elif 3 <= elapsed:
+                if self.mouse_in_target:
+                    self.mouse_recv_stim = True
+                    self.mouse_stim_timer = time.perf_counter()
+                    return
+                elif not self.mouse_in_target:
+                    self.mouse_recv_stim = False
+                    self.mouse_stim_timer = None
+                    return
+        else:
+            if self.mouse_in_target:
+                self.mouse_recv_stim = True
+                self.mouse_stim_timer = time.perf_counter()
+
+    def reset_bar(self):
+        """Resets to initial conditions"""
+        # Reset Locations
+        self.curr_loc = -1
+        self.text_hloc = 0
+        # Reset Mouse Location timers and counters
+        self.in_targ_stopwatch.reset()
+        self.get_stim_stopwatch.reset()
+        self.mouse_n_entries = 0
+        self.mouse_n_stims = 0
+        self.mouse_stim_timer = None
+        # Reset Progress Bar
+        self.image.fill(0)
+        # Add new progress bar at origin
+        self.pbar_slice[:, :1, :] = 255
+        # Add time indicators
+        self.image[61:62, :, :] = 255
+        num_chunks = int(self._duration / 30)
+        num_chunks = min([12, num_chunks])
+        num_chunks = max([2, num_chunks])
+        seg_size = int(self.image.shape[1] / num_chunks)
+        time_chunk = (self._duration / num_chunks)
+        for i in np.arange(1, num_chunks):
+            loc = seg_size * i
+            tloc = format_secs(time_chunk*i)
+            self.image[62:65, loc-1:loc, :] = 255
+            cv2.putText(self.image, tloc, (loc-15, 74), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255, 255, 255))
+        # Add legends
+        self.image[79:96, 319:320, :] = 255
+        self.image[80:95, 3:18, 1] = 255
+        cv2.putText(self.image, 'In Region:', (19, 92), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255))
+        cv2.putText(self.image, '(# Entries:', (175, 92), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255))
+        self.image[80:95, 323:338, 2] = 255
+        cv2.putText(self.image, 'Get Stim:', (340, 92), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255))
+        cv2.putText(self.image, '(# Stims:', (491, 92), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255))
+        # add initializing timer text
+        self.set_timer_text(reset=True)
+        self.output_array.set_can_recv_img()
+
+    def can_update(self):
+        """Checks we are allowed to proceed"""
+        if self._start:
+            self._start = False
+            self._running = True
+            self.reset_bar()
+            self.start_time = time.perf_counter()
+        finished = self.curr_loc >= self.num_steps
+        if finished or not self._running:
+            return False
+        return True
+
+    def update(self):
+        """Draws next frame of progress bar"""
+        # Get elapsed time, get expected location, check mouse location/stim status
+        elapsed = time.perf_counter() - self.start_time
+        loc = int((elapsed / self._duration) * self.num_steps)
+        # Check if mouse in target region; also calculate total time inside
+        if self.mouse_in_target:
+            self.mouse_in_targ_slice[:, loc - 1:loc, :] = 255
+            if not self.in_targ_stopwatch.started:
+                self.mouse_n_entries += 1
+                self.in_targ_stopwatch.start()
+        else:
+            if self.in_targ_stopwatch.started:
+                self.in_targ_stopwatch.stop()
+        # Check if mouse receive stimulation; calculate total time receive
+        if self.mouse_recv_stim:
+            self.mouse_stim_slice[:, loc - 1:loc, :] = 255
+            if not self.get_stim_stopwatch.started:
+                self.mouse_n_stims += 1
+                self.get_stim_stopwatch.start()
+        else:
+            if self.get_stim_stopwatch.started:
+                self.get_stim_stopwatch.stop()
+        # If enough time elapsed, update current location to expected location
+        if loc != self.curr_loc:
+            self.pbar_slice[:, self.curr_loc - 1:self.curr_loc, :] = 0
+            self.pbar_slice[:, loc - 1:loc + 1, :] = 255
+            if self.txt_left_lmt <= loc <= self.txt_right_lmt:
+                self.text_hloc = loc - self.txt_left_lmt
+            self.curr_loc = loc
+        # Update Text and send img if can be received
+        if self.output_array.can_send_img():
+            self.set_timer_text(reset=False)
+            self.output_array.set_can_recv_img()
+
+
+class Heatmap(object):
+    """Generates heatmap from coordinates"""
+    def __init__(self):
+        self.mp_array = SyncableMPArray(MAP_DIMS)
+        # Constants
+        self.num_rows = 12
+        self.num_cols = 16
+        self.row_scale = int(MAP_DIMS[0] / self.num_rows)
+        self.col_scale = int(MAP_DIMS[1] / self.num_cols)
+        # Main thread vars
+        self.bins = np.zeros((self.num_rows, self.num_cols), dtype='uint32')
+        self.empty = np.zeros((self.num_rows, self.num_cols), dtype='uint8')
+        # Modifier vars (READ ONLY for main thread)
+        self._reset = False
+
+    # Initializing functions. Call once once new process starts
+    def init_unpickleable_objs(self):
+        """These objects must be created in the process they will run in"""
+        self.output_array = self.mp_array.generate_np_array()
+        self.output_array.set_can_recv_img()
+
+    # Modifier Functions. Can call from other threads
+    # *** Non-underscored variables are READ ONLY
+    def reset(self):
+        self._reset = True
+
+    # Main Update Function. Run in Main Thread. Do NOT call from any other thread
+    # *** Underscored variables are READ ONLY
+    def update(self, coord):
+        """Update heatmap with supplied coord"""
+        col, row = coord
+        # Find bins this coord belongs to, and add to bin
+        if row is not None and col is not None:
+            rowbin = int(row / (self.row_scale * MAP_DOWNSCALE))
+            colbin = int(col / (self.col_scale * MAP_DOWNSCALE))
+            self.bins[rowbin, colbin] += 1
+            # We use a black-yellow-red gradient.
+            red = self.bins.copy()
+            green = self.bins.copy()
+            # Create Gradient
+            red = (red / red.max()) * 2 * 255
+            red = np.clip(red, 0, 255)
+            green = (green / green.max()) * 2 * 255
+            green[green > 255] = 255 - (green[green > 255] - 255)
+            # Retype into 8 bits
+            red = red.astype('uint8')
+            green = green.astype('uint8')
+            # Create Image; blue is empty.
+            bins = np.dstack((red, green, self.empty))
+            heatmap = np.kron(bins, np.ones((self.row_scale, self.col_scale, 1), dtype='uint8'))
+            self.output_array.send_img(heatmap)
+        if self._reset:
+            self._reset = False
+            self.bins.fill(0)
+            self.output_array.fill(0)
+        # Update Gradient
+        return self.bins.min(), self.bins.max()
+
+    # Generate Output from List of Coords
+    def get_heatmap(self, coord_list):
+        """Provided a full list of coords, generate a full size map"""
+        bins = np.zeros((self.num_rows, self.num_cols), dtype='uint32')
+        empty = np.zeros((self.num_rows, self.num_cols), dtype='uint8')
+        row_scale = int(VID_DIM_RGB[0] / self.num_rows)
+        col_scale = int(VID_DIM_RGB[1] / self.num_cols)
+        for col, row in coord_list:
+            if row is not None and col is not None:
+                rowbin = int(row / row_scale)
+                colbin = int(col / col_scale)
+                bins[rowbin, colbin] += 1
+        red = bins.copy()
+        green = bins.copy()
+        # Create Gradient (black yellow red)
+        if bins.max() > 0:
+            red = (red / red.max()) * 2 * 255
+            red = np.clip(red, 0, 255)
+            green = (green / green.max()) * 2 * 255
+            green[green > 255] = 255 - (green[green > 255] - 255)
+        # Retype into 8 bits
+        red = red.astype('uint8')
+        green = green.astype('uint8')
+        # Create BGR Image (cv2 imwrite takes BGR)
+        stacked = np.dstack((empty, green, red))
+        heatmap = np.kron(stacked, np.ones((row_scale, col_scale, 1), dtype='uint8'))
+        # Add bin text
+        for row in range(self.num_rows):
+            for col in range(self.num_cols):
+                num = int(bins[row, col])
+                if num < bins.max() / 3:
+                    color = (255, 255, 255)
+                else:
+                    color = (0, 0, 0)
+                cv2.putText(heatmap, str(num), (col*col_scale+5, row*row_scale+25),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.35, color, 1)
+        return bins.min(), bins.max(), heatmap
+
+
+class Pathing(object):
+    """Generates pathing map from coordinates"""
+    def __init__(self):
+        self.mp_array = SyncableMPArray(MAP_DIMS)
+        # Main thread vars
+        self.last_coord = None
+        # Modifier vars (read only in main thread)
+        self._reset = False
+
+    # Initializing functions. Call once once new process starts
+    def init_unpickleable_objs(self):
+        """These objects must be created in the process they will run in"""
+        self.output_array = self.mp_array.generate_np_array()
+        self.output_array.set_can_recv_img()
+
+    # Modifier Functions. Can call from other threads
+    # *** Non-underscored variables are READ ONLY
+    def reset(self):
+        self._reset = True
+
+    # Main Update Function. Run in Main Thread. Do NOT call from any other thread
+    # *** Underscored variables are READ ONLY
+    def update(self, coord):
+        """Draw new pathing segment on pathing array"""
+        col, row = coord
+        if col is not None and row is not None:
+            # Scale coords
+            if MAP_DOWNSCALE > 1:
+                coord = round(col / MAP_DOWNSCALE), round(row / MAP_DOWNSCALE)
+            # Draw new path segment
+            if self.last_coord:
+                cv2.line(self.output_array, coord, self.last_coord, (0, 255, 0), 1)
+            self.last_coord = coord
+        if self._reset:
+            self._reset = False
+            self.last_coord = None
+            self.output_array.fill(0)
+
+    # Generate Output from List of Coords
+    @staticmethod
+    def get_pathmap(coord_list):
+        """Provided a full list of coords, generate a full size map"""
+        last_path_coord = None
+        pathmap = np.zeros(VID_DIM_RGB, dtype='uint8')
+        for coord in coord_list:
+            if coord != (None, None):
+                if last_path_coord:
+                    cv2.line(pathmap, coord, last_path_coord, (0, 255, 0), 1)
+                last_path_coord = coord
+        return pathmap
+
+
+class Gradient(object):
+    """Generates a gradient with variable labels from coordinates"""
+    def __init__(self):
+        self.mp_array = SyncableMPArray((GRADIENT_HEIGHT, *MAP_DIMS[1:]))
+        # Constants
+        self.label_y = 15
+        self.label_xmin = (3, self.label_y)
+        self.label_xmax_shift = MAP_DIMS[1] - 10
+        # Main thread vars
+        self.last_min, self.last_max = -1, -1
+        # Modifier vars (read only in main thread)
+        self._reset = False
+
+    # Initializing functions. Call once once new process starts
+    def init_unpickleable_objs(self):
+        """These objects must be created in the process they will run in"""
+        self.output_array = self.mp_array.generate_np_array()
+        self.init_gradient()
+        self.output_array.set_can_recv_img()
+
+    def init_gradient(self):
+        """Create gradient indicator"""
+        num_grads = 32
+        raw = np.zeros((1, num_grads))
+        for col in range(num_grads):
+            raw[:, col] = col
+        empty = np.zeros((1, num_grads), dtype='uint8')
+        # Create red and green channels.
+        red = raw.copy()
+        green = raw.copy()
+        # Generate gradient. we use a black-yellow-red gradient.
+        red = (red / red.max()) * 2 * 255
+        red = np.clip(red, 0, 255)
+        green = (green / green.max()) * 2 * 255
+        green[green > 255] = 255 - (green[green > 255] - 255)
+        # Retype into 8 bits
+        red = red.astype('uint8')
+        green = green.astype('uint8')
+        # Create image
+        image = np.dstack((red, green, empty))
+        col_scale = int(MAP_DIMS[1] / num_grads)
+        self.gradient = np.kron(image, np.ones((GRADIENT_HEIGHT, col_scale, 1), dtype='uint8'))
+        self.text_slice = self.gradient[(GRADIENT_HEIGHT//2-10):(GRADIENT_HEIGHT//2+10), :, :]
+        # Send gradient image
+        self.output_array.send_img(self.gradient)
+
+    # Modifier Functions. Can call from other threads
+    # *** Non-underscored variables are READ ONLY
+    def reset(self):
+        self._reset = True
+
+    # Main Update Function. Run in Main Thread. Do NOT call from any other thread
+    # *** Underscored variables are READ ONLY
+    def update(self, minimum, maximum):
+        """Update scale on gradient"""
+        if self._reset:
+            self._reset = False
+            self.output_array.send_img(self.gradient)
+            self.last_min, self.last_max = -1, -1
+        if minimum == self.last_min and maximum == self.last_max:
+            return
+        # Reset text
+        self.text_slice[:] = self.gradient[:20, :, :]
+        # Find x location of maximum label
+        label_xmax = self.label_xmax_shift - (len(str(maximum)) * 5)
+        label_xmax = (label_xmax, self.label_y)
+        # Label gradient
+        cv2.putText(self.text_slice, str(minimum), self.label_xmin,
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.35, (255, 255, 255), 1)
+        cv2.putText(self.text_slice, str(maximum), label_xmax,
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 0, 0), 1)
+        # Send to shared array
+        self.output_array.send_img(self.gradient)
+        # Remember min and max
+        self.last_min, self.last_max = minimum, maximum
+
+    # Append a gradient to a heatmap, given min and max
+    @staticmethod
+    def append_gradient(minimum, maximum, heatmap):
+        """Append gradient"""
+        num_grads = 64
+        raw = np.zeros((1, num_grads))
+        for col in range(num_grads):
+            raw[:, col] = col
+        empty = np.zeros((1, num_grads), dtype='uint8')
+        # Create red and green channels.
+        red = raw.copy()
+        green = raw.copy()
+        # Generate gradient. we use a black-yellow-red gradient.
+        red = (red / red.max()) * 2 * 255
+        red = np.clip(red, 0, 255)
+        green = (green / green.max()) * 2 * 255
+        green[green > 255] = 255 - (green[green > 255] - 255)
+        # Retype into 8 bits
+        red = red.astype('uint8')
+        green = green.astype('uint8')
+        # Create gradient (cv2 imwrite takes BGR)
+        image = np.dstack((empty, green, red))
+        col_scale = int(VID_DIM_RGB[1] / num_grads)
+        gradient = np.kron(image, np.ones((GRADIENT_HEIGHT//2, col_scale, 1), dtype='uint8'))
+        # Add min max labels
+        y = 30
+        xmax = VID_DIM_RGB[1] - 8 - len(str(maximum) * 10), y
+        xmin = 3, y
+        # Label gradient
+        cv2.putText(gradient, str(minimum), xmin,
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+        cv2.putText(gradient, str(maximum), xmax,
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
+        # Append to heatmap
+        shape = heatmap.shape[0]+GRADIENT_HEIGHT//2, heatmap.shape[1], 3
+        output = np.zeros(shape, dtype='uint8')
+        output[:heatmap.shape[0], :, :] = heatmap
+        output[heatmap.shape[0]:, :, :] = gradient
+        return output
+
+
+class CoordinateProcessor(StoppableProcess):
+    """Processes CV2 Coordinates"""
+    def __init__(self, coords_queue, initial_duration):
+        super(CoordinateProcessor, self).__init__()
+        self.connected = True
+        self.name = PROC_COORDS
+        self.input_msgs = mp.Queue()
+        self.output_msgs = PROC_HANDLER_QUEUE
+        self.parent_pipe, self.pipe = mp.Pipe()
+        self.exp_start_event = EXP_START_EVENT
+        # Output deque for coords, coord times, and mouse in region/get stim status
+        self.all_coords = deque()
+        self.coords_saved = True
+        self._reset_coords = False
+        self._save_name = None
+        # Input source
+        self.input_queue = coords_queue
+        # Mapping Objects
+        self.heatmap = Heatmap()
+        self.pathing = Pathing()
+        self.gradient = Gradient()
+        self.progbar = ProgressBar(initial_duration)
+
+    # Initializing functions. Call once once new process starts
+    def init_unpickleable_objs(self):
+        """Initializes objs that must be created in the process it runs in"""
+        for obj in (self.heatmap, self.pathing, self.gradient, self.progbar):
+            obj.init_unpickleable_objs()
+        self.setup_msg_parser()
+
+    def setup_msg_parser(self):
+        """Dictionary of {Msg:Actions}"""
+        self._msg_parser = {
+            CMD_START: lambda trial_params: self.run_experiment(run=True, trial_params=trial_params),
+            CMD_STOP: lambda val: self.run_experiment(run=False, trial_params=None),
+            CMD_EXIT: lambda val: self.stop(),
+            CMD_SET_TIME: lambda ttl_time: self.set_ttl_time(ttl_time),
+            CMD_CLR_MAPS: lambda val: self.reset_maps(),
+            CMD_TARG_DRAW: lambda params: self.progbar.targ_perim.toggle_draw(params),
+            CMD_TARG_RADIUS: lambda radius: self.progbar.targ_perim.update_radius(radius),
+        }
+
+    # Message read/write/process functions. CALL IN CHILD THREADS
+    # *** Non-underscored variables are READ ONLY
+    def run_experiment(self, run, trial_params):
+        """Clears maps, starts experiment"""
+        if run:
+            self.set_save_name(trial_params[0])
+            self.pipe.send(MSG_RECEIVED)
+            self.exp_start_event.wait()
+            self.reset_maps()
+            self.all_coords.clear()
+            self.coords_saved = False
+            self.progbar.set_start()
+        elif not run:
+            self.progbar.set_stop()
+
+    def reset_maps(self):
+        """Resets heatmap, pathing map, gradient"""
+        for obj in (self.heatmap, self.pathing, self.gradient):
+            obj.reset()
+
+    def set_save_name(self, save_name):
+        self._save_name = save_name
+
+    def process_message(self, msg):
+        self._msg_parser[msg.command](msg.value)
+
+    def msg_polling(self):
+        """Run on separate thread. Listens to input_msgs queue for messages"""
+        while self.connected:
+            try:
+                msg = self.input_msgs.get(timeout=0.5)
+            except Queue.Empty:
+                time.sleep(30.0 / 1000.0)
+            else:
+                msg = ReadMessage(msg)
+                self.process_message(msg)
+
+    # Main Update Function. Run in Main Thread. Do NOT call from any other thread
+    # *** Underscored variables are READ ONLY
+    def run(self):
+        """Call using start(); spawns new process"""
+        self.init_unpickleable_objs()
+        # Threading
+        POLLING = 'polling'
+        thr_msg_polling = thr.Thread(target=self.msg_polling, name=POLLING, daemon=True)
+        thr_msg_polling.start()
+        # Main Process Loop
+        while self.connected:
+            self.process_coords()
+            if self.stopped():
+                self.connected = False
+                while True:
+                    time.sleep(5.0 / 1000.0)
+                    threads = [thread.name for thread in thr.enumerate()]
+                    if POLLING not in threads:
+                        break
+        print('Exiting Coordinate Processor...')
+
+    def process_coords(self):
+        """Processes coordinates into heatmap and pathing map"""
+        # Get coords, update all maps, send if able to
+        try:
+            coord = self.input_queue.get_nowait()
+        except Queue.Empty:
+            coord = None
+            time.sleep(1.0 / 1000.0)
+        else:
+            # Check if mouse is inside target region
+            self.progbar.check_mouse_inside_target(coord)
+            # Update maps
+            self.pathing.update(coord)
+            min_max = self.heatmap.update(coord)
+            self.gradient.update(*min_max)
+            # Send new updates to gui if able. Send together so all 3 maps remain in sync
+            send = (obj.output_array.can_send_img() for obj in (self.pathing, self.heatmap, self.gradient))
+            if all(send):
+                self.heatmap.output_array.set_can_recv_img()
+                self.pathing.output_array.set_can_recv_img()
+                self.gradient.output_array.set_can_recv_img()
+        # We update progress bar regardless if there were new coordinates available
+        # Update Progress Bar; if mouse inside target region, we determine if should stimulate
+        if not self.progbar.can_update():
+            if not self.coords_saved:
+                self.coords_saved = True
+                self.save_coords()
+        else:
+            # If progress bar is allowed to run/update, we assume exp is running so we send stim to mouse
+            self.progbar.send_stim_to_mouse()
+            if coord:
+                self.append_coords(coord)
+            self.progbar.update()
+
+    def set_ttl_time(self, ttl_time):
+        """Reformats progress bar with new duration"""
+        self.progbar.set_duration(ttl_time)
+        self.progbar.reset_bar()
+
+    # Save coords and output to file at end of trial
+    def append_coords(self, coord):
+        """Add coords to deque, along with timing/mouse statuses"""
+        time_elapsed = round(time.perf_counter()-self.progbar.start_time, 2)
+        targ_elapsed = round(self.progbar.in_targ_stopwatch.elapsed(), 2)
+        stim_elapsed = round(self.progbar.get_stim_stopwatch.elapsed(), 2)
+        in_targ = self.progbar.mouse_in_target
+        get_stim = self.progbar.mouse_recv_stim
+        append = (time_elapsed, *coord, in_targ, targ_elapsed, get_stim, stim_elapsed)
+        self.all_coords.append(append)
+
+    def save_coords(self):
+        """saves coords to file"""
+        # Inform proc handler we are starting to save
+        msg = NewMessage(dev=self.name, cmd=MSG_VIDREC_SAVING)
+        self.output_msgs.put_nowait(msg)
+        # Save coords to .csv
+        file = self._save_name + '_Coords.csv'
+        with open(file, 'w') as f:
+            # target region information
+            for element in ('Target Region X', 'Target Region Y', 'Target Region Radius',
+                            'Normalized X', 'Normalized Y'):
+                f.write(element+',')
+            f.write('\n')
+            for element in (self.progbar.targ_perim.x, self.progbar.targ_perim.y, self.progbar.targ_perim.radius,
+                            self.progbar.targ_perim.norm_x, self.progbar.targ_perim.norm_y):
+                f.write(str(element)+',')
+            f.write('\n')
+            # coords data
+            for element in ('Total Time Elapsed (s)', 'x', 'y',
+                            'Mouse In Target', 'Total Time in Target (s)',
+                            'Mouse Get Stim', 'Total Stim Time (s)'):
+                f.write(element+',')
+            f.write('\n')
+            for line in self.all_coords:
+                for element in line:
+                    f.write(str(element)+',')
+                f.write('\n')
+        # Generate full size heatmap and pathing map
+        coords = [(line[1], line[2]) for line in self.all_coords]
+        pathmap = self.pathing.get_pathmap(coord_list=coords)
+        heatmap = self.heatmap.get_heatmap(coord_list=coords)
+        heatmap = self.gradient.append_gradient(*heatmap)
+        quality = int(cv2.IMWRITE_PNG_COMPRESSION), 0
+        cv2.imwrite(self._save_name+'_Heatmap.png', heatmap, quality)
+        cv2.imwrite(self._save_name+'_Mouse_Path.png', pathmap, quality)
+        # Inform proc handler we finished saving
+        msg = NewMessage(dev=self.name, cmd=MSG_VIDREC_FINISHED)
+        self.output_msgs.put_nowait(msg)
+        print('Finished Saving Coordinates to File...')
