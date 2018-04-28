@@ -10,6 +10,7 @@ from GUI.MiscWidgets import *
 from Misc.GlobalVars import *
 from Misc.CustomFunctions import format_secs
 from Misc.CustomClasses import NewMessage
+from DirsSettings.Settings import TargetAreas
 
 
 # Utilities
@@ -90,6 +91,8 @@ class GuiMainControls(qg.QWidget):
         """Connects child widget signal and slots"""
         self.targ_area_config.newTargAreasSignal.\
             connect(lambda: self.curr_exp_config.targ_region_selected(selected=False))
+        self.curr_exp_config.expStartedSignal.\
+            connect(self.targ_area_config.set_curr_selection_tested)
 
 
 class GuiTargetAreaConfigs(qg.QGroupBox):
@@ -164,6 +167,10 @@ class GuiTargetAreaConfigs(qg.QGroupBox):
         # Set widget initial params
         self.min_dist_box.addItem('0')
         self.min_dist_box.addItem('Radius')
+        self.min_dist_box.addItem('Diameter')
+        self.min_dist_box.addItem('R + Edge')
+        self.min_dist_box.addItem('D + Edge')
+        self.min_dist_box.setMaximumWidth(80)
         # Grid
         self.grid.addWidget(min_dist_btwn_label, 1, 0)
         self.grid.addWidget(self.min_dist_box, 1, 1)
@@ -208,17 +215,32 @@ class GuiTargetAreaConfigs(qg.QGroupBox):
     # Generate new coords and save to settings
     def generate_new_pts(self):
         """Create new target region centers from 2D gaussian"""
-        if self.min_dist_box.currentText() == 'Radius':
+        param_selector = {
+            'Radius': (4, 1, False),
+            'Diameter': (8, 2, False),
+            'R + Edge': (7, 1, True),
+            'D + Edge': (10, 2, True),
+        }
+        selection = self.min_dist_box.currentText()
+        # Check radius
+        if selection != '0':
             (x1, y1), (x2, y2) = self.dirs.settings.bounding_coords
-            minimum_rad = min((x2-x1)/4, (y2-y1)/4)
-            if self.dirs.settings.target_area_radius > minimum_rad:
+            div_factor = param_selector[selection][0]
+            min_sep = param_selector[selection][1]
+            with_edge = param_selector[selection][2]
+            maximum_radius = min((x2-x1)/div_factor, (y2-y1)/div_factor)
+            if self.dirs.settings.target_area_radius > maximum_radius:
                 self.new_coords_btn.toggle_state('reduce_radius')
                 return
             else:
                 self.new_coords_btn.toggle_state('default')
-                self.dirs.settings.last_targ_areas.generate_targ_areas(True, dirs=self.dirs)
-        else:
-            self.dirs.settings.last_targ_areas.generate_targ_areas(False, dirs=None)
+                self.dirs.settings.last_targ_areas = TargetAreas(check_radius=True,
+                                                                 min_sep=min_sep,
+                                                                 with_edge=with_edge,
+                                                                 dirs=self.dirs)
+        # Don't check radius
+        elif selection == '0':
+            self.dirs.settings.last_targ_areas = TargetAreas(check_radius=False)
         # Set own data displays first
         areas = (area for area in self.dirs.settings.last_targ_areas.areas)
         for display in self.info_displays:
@@ -227,30 +249,41 @@ class GuiTargetAreaConfigs(qg.QGroupBox):
         # main interactive display will also send back scaled x, y, which will pass into self.indicators_reshaped
         self.newTargAreasSignal.emit()
 
-    def set_targ_areas_dropdown(self, newest=None):
+    def set_targ_areas_dropdown(self):
         """Adds fields to dropdown box"""
         self.targ_areas_dropdown.clear()
+        self.targ_areas_dropdown.addItem('')
         for name in self.dirs.settings.target_areas:
             self.targ_areas_dropdown.addItem(name)
-        if newest:
-            index = self.targ_areas_dropdown.findText(newest, qc.Qt.MatchFixedString)
+        if self.dirs.settings.last_targ_areas.name is not None:
+            name = self.dirs.settings.last_targ_areas.name
+            index = self.targ_areas_dropdown.findText(name, qc.Qt.MatchFixedString)
             self.targ_areas_dropdown.setCurrentIndex(index)
 
     def save_target_regions(self):
         """Saves currently displayed set of target regions"""
         name = self.targ_areas_dropdown.currentText().strip()
-        if not name or name in self.dirs.settings.target_areas:
+        if name == '':
             self.targ_areas_dropdown.visual_warning()
             return
-        curr_coords = deepcopy(self.dirs.settings.last_targ_areas.areas)
+        elif name in self.dirs.settings.target_areas:
+            msg = 'Overwrite this Save?'
+            nuke = qg.QMessageBox.warning(self, 'WARNING', msg, qg.QMessageBox.No | qg.QMessageBox.Yes,
+                                          qg.QMessageBox.No)
+            if nuke == qg.QMessageBox.No:
+                return
+        curr_coords = self.dirs.settings.last_targ_areas
+        curr_coords.name = name
         self.dirs.settings.target_areas[name] = curr_coords
-        self.set_targ_areas_dropdown(newest=name)
+        self.set_targ_areas_dropdown()
 
     def select_pts_from_settings(self):
         """Grabs target area coordinates from self.dirs.settings"""
         name = self.targ_areas_dropdown.currentText()
+        if name == '':
+            return
         areas = self.dirs.settings.target_areas[name]
-        self.dirs.settings.last_targ_areas.areas = areas
+        self.dirs.settings.last_targ_areas = areas
         # Set own data displays first
         areas = (area for area in self.dirs.settings.last_targ_areas.areas)
         for display in self.info_displays:
@@ -258,6 +291,14 @@ class GuiTargetAreaConfigs(qg.QGroupBox):
         # emit signal to other widgets
         # main interactive display will also send back scaled x, y, which will pass into self.indicators_reshaped
         self.newTargAreasSignal.emit()
+
+    def set_curr_selection_tested(self):
+        """Set the tested attribute of the currently selected field to True
+        Used by START button; we set a target region to TESTED if we start the experiment with it active"""
+        selected = [display for display in self.info_displays if display.selected]
+        if len(selected) == 1:
+            selected[0].data.tested = True
+            selected[0].tested_chkbox.setChecked(True)
 
 
 class GuiStartStopControls(qg.QGroupBox):

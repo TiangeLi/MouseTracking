@@ -29,6 +29,9 @@ class Directories(object):
             self.save()
         # Load from settings file
         self.load()
+        # Initialize last target areas
+        if self.settings.last_targ_areas.name:
+            self.settings.last_targ_areas = self.settings.target_areas[self.settings.last_targ_areas.name]
 
     def save(self):
         """Pickle save to self.settings_file"""

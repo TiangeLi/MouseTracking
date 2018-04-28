@@ -236,12 +236,16 @@ class MasterGui(qg.QWidget):
             qg.QMessageBox.warning(self, 'Warning!', 'Cannot Close While Experiment is Running!', qg.QMessageBox.Close)
             return
         else:
-            print('---------------------------------------------')
             self.send_message(cmd=CMD_EXIT)
-            while not len(mp.active_children()) == 0:
+            print('---------------------------------------------')
+            start_time = time.perf_counter()
+            while not (len(mp.active_children()) == 0) and not (time.perf_counter()-start_time > 5):
                 time.sleep(5.0 / 1000.0)
             super(MasterGui, self).closeEvent(e)
-            print('All Child Processes Closed')
+            if len(mp.active_children()) != 0:
+                print('--- Unable to Close All Child Processes ---')
+            else:
+                print('All Child Processes Closed')
 
 
 # Main Program

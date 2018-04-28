@@ -85,7 +85,6 @@ class GuiTargetAreaIndicator(qg.QGraphicsEllipseItem):
             self.setBrush(qWhite)
         else:
             self.setBrush(qYellow)
-        self.setToolTip('Location Has Been Tested: {}'.format(self.data.tested))
 
     def set_rect(self, x1, y1, x2, y2):
         """Scales coordinates into new rectangle"""
