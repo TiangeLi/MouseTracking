@@ -695,6 +695,7 @@ class CoordinateProcessor(StoppableProcess):
                 f.write(element+',')
             f.write('\n')
             last_entry_time = 0
+            last_stored_time = 0
             last_num_entries = 0
             for line in self.all_coords:
                 for index, element in enumerate(line):
@@ -702,8 +703,9 @@ class CoordinateProcessor(StoppableProcess):
                     if index == 4:
                         if element != last_num_entries:
                             last_num_entries = element
-                            last_entry_time = line[5]
+                            last_entry_time = last_stored_time
                         f.write(str(line[5]-last_entry_time) + ',')
+                        last_stored_time = line[5]
                 f.write('\n')
         # Generate full size heatmap and pathing map
         coords = [(line[1], line[2]) for line in self.all_coords]
