@@ -51,12 +51,12 @@ class GuiQuadrantIndicator(qg.QGraphicsRectItem):
         """Change color of indicator when mouse enters"""
         if not self.selected:
             self.setBrush(qSemi)
-            self.moveSignal.emit(0, 0, False)
 
     def hoverLeaveEvent(self, e):
         """Change color of indicator when mouse leaves"""
         if not self.selected:
             self.setBrush(qClear)
+        else:
             self.moveSignal.emit(0, 0, False)
 
     def mousePressEvent(self, e):
