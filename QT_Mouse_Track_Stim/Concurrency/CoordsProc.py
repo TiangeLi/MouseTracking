@@ -20,6 +20,11 @@ else:
     import queue as Queue
 
 
+# Stimulate mouse for STIM_ON seconds every STIM_TOTAL seconds
+STIM_ON = 0.4
+STIM_TOTAL = 1.0
+
+
 class ProgressBar(object):
     """Numpy Array based progress bar"""
     def __init__(self, initial_duration):
@@ -49,13 +54,13 @@ class ProgressBar(object):
         self.mouse_in_targ_slice = None
         self.mouse_stim_slice = None
         # Mouse Status
-        self.mouse_in_target = False
-        self.mouse_recv_stim = False
-        self.mouse_stim_timer = None
-        self.in_targ_stopwatch = StopWatch()
-        self.get_stim_stopwatch = StopWatch()
-        self.mouse_n_entries = 0
-        self.mouse_n_stims = 0
+        self.mouse_in_target = False  # is mouse inside target region?
+        self.mouse_recv_stim = False  # does mouse receive stimulation?
+        self.mouse_stim_timer = None  # timer to make sure mouse receives 400ms stim, max every 1000ms
+        self.in_targ_stopwatch = StopWatch()  # total time spent in target region
+        self.get_stim_stopwatch = StopWatch()  # total time spent receiving stimulation
+        self.mouse_n_entries = 0  # num entries into target region
+        self.mouse_n_stims = 0  # num stimulations received
         # -- Modifier vars (read-only for main thread) -- #
         # Operation Params
         self._start = False
@@ -140,12 +145,12 @@ class ProgressBar(object):
         """Stim mouse if inside region"""
         if self.mouse_stim_timer:
             elapsed = time.perf_counter() - self.mouse_stim_timer
-            if 0.5 > elapsed:
+            if STIM_ON > elapsed:
                 return
-            elif 0.5 <= elapsed < 3:
+            elif STIM_ON <= elapsed < STIM_TOTAL:
                 self.mouse_recv_stim = False
                 return
-            elif 3 <= elapsed:
+            elif STIM_TOTAL <= elapsed:
                 if self.mouse_in_target:
                     self.mouse_recv_stim = True
                     self.mouse_stim_timer = time.perf_counter()
@@ -654,12 +659,16 @@ class CoordinateProcessor(StoppableProcess):
     # Save coords and output to file at end of trial
     def append_coords(self, coord):
         """Add coords to deque, along with timing/mouse statuses"""
-        time_elapsed = round(time.perf_counter()-self.progbar.start_time, 2)
-        targ_elapsed = round(self.progbar.in_targ_stopwatch.elapsed(), 2)
-        stim_elapsed = round(self.progbar.get_stim_stopwatch.elapsed(), 2)
+        time_elapsed = round(time.perf_counter()-self.progbar.start_time, 3)
+        targ_elapsed = round(self.progbar.in_targ_stopwatch.elapsed(), 3)
+        stim_elapsed = round(self.progbar.get_stim_stopwatch.elapsed(), 3)
         in_targ = self.progbar.mouse_in_target
         get_stim = self.progbar.mouse_recv_stim
-        append = (time_elapsed, *coord, in_targ, targ_elapsed, get_stim, stim_elapsed)
+        num_entries = self.progbar.mouse_n_entries
+        num_stims = self.progbar.mouse_n_stims
+        append = (time_elapsed, *coord,
+                  in_targ, num_entries, targ_elapsed,
+                  get_stim, num_stims, stim_elapsed)
         self.all_coords.append(append)
 
     def save_coords(self):
@@ -680,14 +689,23 @@ class CoordinateProcessor(StoppableProcess):
                 f.write(str(element)+',')
             f.write('\n')
             # coords data
-            for element in ('Total Time Elapsed (s)', 'x', 'y',
-                            'Mouse In Target', 'Total Time in Target (s)',
-                            'Mouse Get Stim', 'Total Stim Time (s)'):
+            for element in ('Total Time Elapsed (s)', 'Mouse X', 'Mouse Y',
+                            'Mouse In Target', 'Num Entries', 'Time in Target (s)', 'Total Time in Target (s)',
+                            'Mouse Get Stim', 'Num Stimulations', 'Total Stim Time (s)'):
                 f.write(element+',')
             f.write('\n')
+            last_entry_time = 0
+            last_stored_time = 0
+            last_num_entries = 0
             for line in self.all_coords:
-                for element in line:
-                    f.write(str(element)+',')
+                for index, element in enumerate(line):
+                    f.write(str(element) + ',')
+                    if index == 4:
+                        if element != last_num_entries:
+                            last_num_entries = element
+                            last_entry_time = last_stored_time
+                        f.write(str(line[5]-last_entry_time) + ',')
+                        last_stored_time = line[5]
                 f.write('\n')
         # Generate full size heatmap and pathing map
         coords = [(line[1], line[2]) for line in self.all_coords]
