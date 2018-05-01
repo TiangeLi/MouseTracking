@@ -647,9 +647,9 @@ class CoordinateProcessor(StoppableProcess):
         else:
             # If progress bar is allowed to run/update, we assume exp is running so we send stim to mouse
             self.progbar.send_stim_to_mouse()
+            self.progbar.update()
             if coord:
                 self.append_coords(coord)
-            self.progbar.update()
 
     def set_ttl_time(self, ttl_time):
         """Reformats progress bar with new duration"""
