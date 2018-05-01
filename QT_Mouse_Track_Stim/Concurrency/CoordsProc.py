@@ -56,7 +56,7 @@ class ProgressBar(object):
         # Mouse Status
         self.mouse_in_target = False  # is mouse inside target region?
         self.mouse_recv_stim = False  # does mouse receive stimulation?
-        self.mouse_stim_timer = None  # timer to make sure mouse receives 400ms stim, max every 1000ms
+        self.mouse_stim_timer = None  # timer to make sure mouse receives STIM_ON secs stim, max every STIM_TOTAL secs
         self.in_targ_stopwatch = StopWatch()  # total time spent in target region
         self.get_stim_stopwatch = StopWatch()  # total time spent receiving stimulation
         self.mouse_n_entries = 0  # num entries into target region
