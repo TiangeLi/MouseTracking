@@ -9,6 +9,7 @@ import numpy as np
 from collections import deque
 import threading as thr
 import multiprocessing as mp
+from pyfirmata import Arduino
 from Misc.GlobalVars import *
 from Misc.CustomFunctions import format_secs
 from Misc.CustomClasses import StoppableProcess, ReadMessage, StopWatch, NewMessage
@@ -23,6 +24,9 @@ else:
 # Stimulate mouse for STIM_ON seconds every STIM_TOTAL seconds
 STIM_ON = 0.4
 STIM_TOTAL = 1.0
+# Arduino Serial Port and Pin output
+ARD_SER_PORT = 'COM1'
+ARD_OUTPUT_PIN = 'd:13:o'  # digital, pin 13, output
 
 
 class ProgressBar(object):
@@ -83,6 +87,9 @@ class ProgressBar(object):
         self.stim_timer_slice = self.image[92-h:92+5, 411:411+w, :]
         self.targ_count_slice = self.image[92-h:92+5, 256:256+int(w*3/4), :]
         self.stim_count_slice = self.image[92-h:92+5, 563:563+int(w*3/4), :]
+        # Arduino object
+        board = Arduino(ARD_SER_PORT)
+        self.serial_output = board.get_pin(ARD_OUTPUT_PIN)
         # Set Progress bar to initial conditions
         self.reset_bar()
 
@@ -111,8 +118,8 @@ class ProgressBar(object):
             main_timer = format_secs(time.perf_counter() - self.start_time, 'with_ms')
             mouse_in_region_timer = format_secs(self.in_targ_stopwatch.elapsed(), 'with_ms')
             mouse_recv_stim_timer = format_secs(self.get_stim_stopwatch.elapsed(), 'with_ms')
-            num_entries = str(self.mouse_n_entries) + ')'
-            num_stims = str(self.mouse_n_stims) + ')'
+            num_entries = '{})'.format(self.mouse_n_entries)
+            num_stims = '{})'.format(self.mouse_n_stims)
         self.main_timer_slice.fill(0)
         self.targ_timer_slice.fill(0)
         self.stim_timer_slice.fill(0)
@@ -235,9 +242,11 @@ class ProgressBar(object):
             if not self.get_stim_stopwatch.started:
                 self.mouse_n_stims += 1
                 self.get_stim_stopwatch.start()
+                self.serial_output.write(1)
         else:
             if self.get_stim_stopwatch.started:
                 self.get_stim_stopwatch.stop()
+                self.serial_output.write(0)
         # If enough time elapsed, update current location to expected location
         if loc != self.curr_loc:
             self.pbar_slice[:, self.curr_loc - 1:self.curr_loc, :] = 0
@@ -677,34 +686,34 @@ class CoordinateProcessor(StoppableProcess):
         msg = NewMessage(dev=self.name, cmd=MSG_VIDREC_SAVING)
         self.output_msgs.put_nowait(msg)
         # Save coords to .csv
-        file = self._save_name + '_Coords.csv'
+        file = '{}_Coords.csv'.format(self._save_name)
         with open(file, 'w') as f:
             # target region information
             for element in ('Target Region X', 'Target Region Y', 'Target Region Radius',
                             'Normalized X', 'Normalized Y'):
-                f.write(element+',')
+                f.write('{},'.format(element))
             f.write('\n')
             for element in (self.progbar.targ_perim.x, self.progbar.targ_perim.y, self.progbar.targ_perim.radius,
                             self.progbar.targ_perim.norm_x, self.progbar.targ_perim.norm_y):
-                f.write(str(element)+',')
+                f.write('{},'.format(element))
             f.write('\n')
             # coords data
             for element in ('Total Time Elapsed (s)', 'Mouse X', 'Mouse Y',
                             'Mouse In Target', 'Num Entries', 'Time in Target (s)', 'Total Time in Target (s)',
                             'Mouse Get Stim', 'Num Stimulations', 'Total Stim Time (s)'):
-                f.write(element+',')
+                f.write('{},'.format(element))
             f.write('\n')
             last_entry_time = 0
             last_stored_time = 0
             last_num_entries = 0
             for line in self.all_coords:
                 for index, element in enumerate(line):
-                    f.write(str(element) + ',')
+                    f.write('{},'.format(element))
                     if index == 4:
                         if element != last_num_entries:
                             last_num_entries = element
                             last_entry_time = last_stored_time
-                        f.write(str(line[5]-last_entry_time) + ',')
+                        f.write('{},'.format(line[5]-last_entry_time))
                         last_stored_time = line[5]
                 f.write('\n')
         # Generate full size heatmap and pathing map
