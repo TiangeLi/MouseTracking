@@ -42,7 +42,7 @@ class TargetAreas(object):
         """Randomly sample num points from a 2D normal"""
         # We sample for 5 points
         areas = []
-        num_to_sample = 5
+        num_to_sample = 6
         # If we check for distance conditions, we need to find out how big the containing rect is
         if check_radius:
             x1, y1, x2, y2 = self.get_boundaries(dirs)

@@ -5,6 +5,7 @@
 import sys
 import cv2
 import time
+import serial
 import numpy as np
 from collections import deque
 import threading as thr
@@ -24,9 +25,51 @@ else:
 # Stimulate mouse for STIM_ON seconds every STIM_TOTAL seconds
 STIM_ON = 0.4
 STIM_TOTAL = 1.0
-# Arduino Serial Port and Pin output
-ARD_SER_PORT = 'COM1'
-ARD_OUTPUT_PIN = 'd:13:o'  # digital, pin 13, output
+
+
+class ArduinoDevice(object):
+    """Connects to external arduino hardware"""
+    def __init__(self):
+        self.port = 'COM1'
+        self.pin = 'd:6:o'  # digital, pin 13, output
+        self.connected = False
+
+    def connect(self):
+        """Attempts to connect to the device"""
+        try:
+            temp1 = serial.Serial(self.port)
+            temp1.flush()
+            temp1.close()
+            self.board = Arduino(self.port)
+        except serial.serialutil.SerialException:
+            self.connected = False
+            try:
+                self.board.exit()
+            except AttributeError:
+                try:
+                    temp2 = serial.Serial(self.port)
+                except serial.serialutil.SerialException:
+                    pass
+                else:
+                    temp2.flush()
+                    temp2.close()
+        else:
+            self.serial_output = self.board.get_pin(self.pin)
+            self.connected = True
+
+    def write(self, num):
+        """Writes to arduino while handling any serial errors"""
+        try:
+            self.serial_output.write(num)
+        except (serial.serialutil.SerialTimeoutException, serial.serialutil.SerialException, AttributeError):
+            self.connected = False
+
+    def exit(self):
+        """Close device cleanly"""
+        try:
+            self.board.exit()
+        except (serial.serialutil.SerialException, serial.serialutil.SerialTimeoutException, AttributeError):
+            pass
 
 
 class ProgressBar(object):
@@ -67,7 +110,6 @@ class ProgressBar(object):
         self.mouse_n_stims = 0  # num stimulations received
         # -- Modifier vars (read-only for main thread) -- #
         # Operation Params
-        self._start = False
         self._running = False
         self._duration = initial_duration
 
@@ -88,8 +130,11 @@ class ProgressBar(object):
         self.targ_count_slice = self.image[92-h:92+5, 256:256+int(w*3/4), :]
         self.stim_count_slice = self.image[92-h:92+5, 563:563+int(w*3/4), :]
         # Arduino object
-        board = Arduino(ARD_SER_PORT)
-        self.serial_output = board.get_pin(ARD_OUTPUT_PIN)
+        cv2.putText(self.output_array, 'LOADING DEVICES...', (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 2, (255, 255, 255), 2)
+        self.output_array.set_can_recv_img()
+        self.arduino = ArduinoDevice()
+        self.arduino.connect()  # this step takes a few seconds
+        self.output_array.fill(0)
         # Set Progress bar to initial conditions
         self.reset_bar()
 
@@ -99,7 +144,8 @@ class ProgressBar(object):
         self._duration = float(duration_in_secs)
 
     def set_start(self):
-        self._start = True
+        self._running = True
+        self.reset_bar()
 
     def set_stop(self):
         self._running = False
@@ -212,13 +258,9 @@ class ProgressBar(object):
 
     def can_update(self):
         """Checks we are allowed to proceed"""
-        if self._start:
-            self._start = False
-            self._running = True
-            self.reset_bar()
-            self.start_time = time.perf_counter()
         finished = self.curr_loc >= self.num_steps
         if finished or not self._running:
+            self.arduino.write(0)
             return False
         return True
 
@@ -242,11 +284,11 @@ class ProgressBar(object):
             if not self.get_stim_stopwatch.started:
                 self.mouse_n_stims += 1
                 self.get_stim_stopwatch.start()
-                self.serial_output.write(1)
+                self.arduino.write(1)
         else:
             if self.get_stim_stopwatch.started:
                 self.get_stim_stopwatch.stop()
-                self.serial_output.write(0)
+                self.arduino.write(0)
         # If enough time elapsed, update current location to expected location
         if loc != self.curr_loc:
             self.pbar_slice[:, self.curr_loc - 1:self.curr_loc, :] = 0
@@ -256,8 +298,15 @@ class ProgressBar(object):
             self.curr_loc = loc
         # Update Text and send img if can be received
         if self.output_array.can_send_img():
-            self.set_timer_text(reset=False)
+            if not self.arduino.connected:
+                self.output_array.fill(0)
+                cv2.putText(self.output_array, 'ARDUINO ERROR. RECONNECT DEVICE', (10, 60), cv2.FONT_HERSHEY_SIMPLEX,
+                            1, (255, 255, 255), 2)
+            else:
+                self.set_timer_text(reset=False)
             self.output_array.set_can_recv_img()
+        if not self.arduino.connected:
+            self.arduino.connect()
 
 
 class Heatmap(object):
@@ -272,8 +321,6 @@ class Heatmap(object):
         # Main thread vars
         self.bins = np.zeros((self.num_rows, self.num_cols), dtype='uint32')
         self.empty = np.zeros((self.num_rows, self.num_cols), dtype='uint8')
-        # Modifier vars (READ ONLY for main thread)
-        self._reset = False
 
     # Initializing functions. Call once once new process starts
     def init_unpickleable_objs(self):
@@ -284,7 +331,8 @@ class Heatmap(object):
     # Modifier Functions. Can call from other threads
     # *** Non-underscored variables are READ ONLY
     def reset(self):
-        self._reset = True
+        self.bins.fill(0)
+        self.output_array.fill(0)
 
     # Main Update Function. Run in Main Thread. Do NOT call from any other thread
     # *** Underscored variables are READ ONLY
@@ -311,10 +359,6 @@ class Heatmap(object):
             bins = np.dstack((red, green, self.empty))
             heatmap = np.kron(bins, np.ones((self.row_scale, self.col_scale, 1), dtype='uint8'))
             self.output_array.send_img(heatmap)
-        if self._reset:
-            self._reset = False
-            self.bins.fill(0)
-            self.output_array.fill(0)
         # Update Gradient
         return self.bins.min(), self.bins.max()
 
@@ -363,8 +407,6 @@ class Pathing(object):
         self.mp_array = SyncableMPArray(MAP_DIMS)
         # Main thread vars
         self.last_coord = None
-        # Modifier vars (read only in main thread)
-        self._reset = False
 
     # Initializing functions. Call once once new process starts
     def init_unpickleable_objs(self):
@@ -375,7 +417,8 @@ class Pathing(object):
     # Modifier Functions. Can call from other threads
     # *** Non-underscored variables are READ ONLY
     def reset(self):
-        self._reset = True
+        self.last_coord = None
+        self.output_array.fill(0)
 
     # Main Update Function. Run in Main Thread. Do NOT call from any other thread
     # *** Underscored variables are READ ONLY
@@ -390,10 +433,6 @@ class Pathing(object):
             if self.last_coord:
                 cv2.line(self.output_array, coord, self.last_coord, (0, 255, 0), 1)
             self.last_coord = coord
-        if self._reset:
-            self._reset = False
-            self.last_coord = None
-            self.output_array.fill(0)
 
     # Generate Output from List of Coords
     @staticmethod
@@ -419,8 +458,6 @@ class Gradient(object):
         self.label_xmax_shift = MAP_DIMS[1] - 10
         # Main thread vars
         self.last_min, self.last_max = -1, -1
-        # Modifier vars (read only in main thread)
-        self._reset = False
 
     # Initializing functions. Call once once new process starts
     def init_unpickleable_objs(self):
@@ -458,16 +495,13 @@ class Gradient(object):
     # Modifier Functions. Can call from other threads
     # *** Non-underscored variables are READ ONLY
     def reset(self):
-        self._reset = True
+        self.last_min, self.last_max = -1, -1
+        self.update(0, 0)
 
     # Main Update Function. Run in Main Thread. Do NOT call from any other thread
     # *** Underscored variables are READ ONLY
     def update(self, minimum, maximum):
         """Update scale on gradient"""
-        if self._reset:
-            self._reset = False
-            self.output_array.send_img(self.gradient)
-            self.last_min, self.last_max = -1, -1
         if minimum == self.last_min and maximum == self.last_max:
             return
         # Reset text
@@ -531,6 +565,7 @@ class CoordinateProcessor(StoppableProcess):
     def __init__(self, coords_queue, initial_duration):
         super(CoordinateProcessor, self).__init__()
         self.connected = True
+        self.initialize_experiment = False
         self.name = PROC_COORDS
         self.input_msgs = mp.Queue()
         self.output_msgs = PROC_HANDLER_QUEUE
@@ -574,19 +609,9 @@ class CoordinateProcessor(StoppableProcess):
         """Clears maps, starts experiment"""
         if run:
             self.set_save_name(trial_params[0])
-            self.pipe.send(MSG_RECEIVED)
-            self.exp_start_event.wait()
-            self.reset_maps()
-            self.all_coords.clear()
-            self.coords_saved = False
-            self.progbar.set_start()
+            self.initialize_experiment = True
         elif not run:
             self.progbar.set_stop()
-
-    def reset_maps(self):
-        """Resets heatmap, pathing map, gradient"""
-        for obj in (self.heatmap, self.pathing, self.gradient):
-            obj.reset()
 
     def set_save_name(self, save_name):
         self._save_name = save_name
@@ -607,6 +632,25 @@ class CoordinateProcessor(StoppableProcess):
 
     # Main Update Function. Run in Main Thread. Do NOT call from any other thread
     # *** Underscored variables are READ ONLY
+    def reset_maps(self):
+        """Resets heatmap, pathing map, gradient"""
+        for obj in (self.heatmap, self.pathing, self.gradient):
+            obj.reset()
+
+    def setup_experiment(self):
+        """Setup maps/progbar/data containers for next experiment trial"""
+        # Reset Coordinate deque
+        self.all_coords.clear()
+        self.coords_saved = False
+        # Reset pathing/heatmap/gradient
+        self.reset_maps()
+        # Reset Progressbar
+        self.progbar.set_start()
+        # Notify we are ready to begin and wait for start signal
+        self.pipe.send(MSG_RECEIVED)
+        self.exp_start_event.wait()
+        self.progbar.start_time = time.perf_counter()
+
     def run(self):
         """Call using start(); spawns new process"""
         self.init_unpickleable_objs()
@@ -616,9 +660,13 @@ class CoordinateProcessor(StoppableProcess):
         thr_msg_polling.start()
         # Main Process Loop
         while self.connected:
+            if self.initialize_experiment:
+                self.initialize_experiment = False
+                self.setup_experiment()
             self.process_coords()
             if self.stopped():
                 self.connected = False
+                self.progbar.arduino.exit()
                 while True:
                     time.sleep(5.0 / 1000.0)
                     threads = [thread.name for thread in thr.enumerate()]
