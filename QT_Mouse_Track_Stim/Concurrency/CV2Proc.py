@@ -183,7 +183,7 @@ class CV2Processor(StoppableProcess):
     def acquire_background(self):
         """Gets background to compare mouse motion against"""
         if not self.has_background:
-            print('Getting Background...')
+            print('Recalibrating Tracking Background...')
             self.contrail_coords.clear()
             bg = deque(maxlen=self.num_calib_frames)
             while not len(bg) >= self.num_calib_frames:

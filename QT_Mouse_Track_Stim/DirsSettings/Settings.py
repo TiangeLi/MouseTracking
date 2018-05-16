@@ -40,7 +40,7 @@ class TargetAreas(object):
 
     def generate_targ_areas(self, check_radius, min_sep, with_edge, dirs):
         """Randomly sample num points from a 2D normal"""
-        # We sample for 5 points
+        # We sample for num_to_sample points
         areas = []
         num_to_sample = 6
         # If we check for distance conditions, we need to find out how big the containing rect is

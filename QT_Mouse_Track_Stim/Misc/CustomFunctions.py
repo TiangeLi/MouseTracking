@@ -2,6 +2,7 @@
 
 """Functions for commonly performed tasks"""
 
+import os
 from datetime import datetime
 from Misc.GlobalVars import *
 
@@ -51,3 +52,8 @@ def format_daytime(option, use_as_save, dayformat='/', timeformat=':'):
     if option == DAY: return formatted_day
     elif option == TIME: return formatted_time
     elif option == DAY+TIME: return '{}_{}'.format(formatted_day, formatted_time)
+
+
+def clear_console():
+    """Clears the command console"""
+    os.system('cls' if os.name == 'nt' else 'clear')

@@ -14,6 +14,7 @@ from GUI.DataDisplays.MainContainer import DataDisplays
 from GUI.UserControls.ExpControls import GuiVideoOperations, GuiMainControls
 from Misc.GlobalVars import *
 from Misc.CustomClasses import NewMessage, ReadMessage
+from Misc.CustomFunctions import clear_console
 if sys.version[0] == '2':
     import Queue as Queue
 else:
@@ -26,6 +27,7 @@ class MasterGui(qg.QWidget):
         super(MasterGui, self).__init__()
         self.dirs = dirs
         self.setWindowTitle('Mouse Tracking')
+        self.setWindowIcon(qg.QIcon('favicon.ico'))
         # Concurrency
         self.proc_handler_queue = PROC_HANDLER_QUEUE
         self.master_dump_queue = MASTER_DUMP_QUEUE
@@ -250,6 +252,8 @@ class MasterGui(qg.QWidget):
 
 # Main Program
 if __name__ == '__main__':
+    clear_console()
+    print('Starting Mouse Tracker 1.0\n\n')
     # Freeze Support if we create a windows .exe
     mp.freeze_support()
     # Setup Directories and save files
