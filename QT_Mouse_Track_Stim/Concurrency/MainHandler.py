@@ -53,6 +53,8 @@ class ProcessHandler(StoppableProcess):
                                                                    cmd=CMD_TARG_RADIUS, val=radius),
             # Messages bound for Camera Process
             CMD_SET_VIDSRC: lambda dev, fname: self.send_message(targets=(PROC_CMR,), cmd=CMD_SET_VIDSRC, val=fname),
+            CMD_SET_CMR_CONFIGS: lambda dev, vals: self.send_message(targets=(PROC_CMR, ),
+                                                                     cmd=CMD_SET_CMR_CONFIGS, val=vals),
             # Messages bound for Coords Process
             CMD_CLR_MAPS: lambda dev, val: self.send_message(targets=(PROC_COORDS,), cmd=CMD_CLR_MAPS),
             # Messages bound for GUI

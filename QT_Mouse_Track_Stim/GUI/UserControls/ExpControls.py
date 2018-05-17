@@ -536,3 +536,88 @@ class GuiVideoOperations(qg.QWidget):
         else:
             fname = ''
         self.send_message(cmd=CMD_SET_VIDSRC, val=fname)
+
+
+class GuiCameraConfigs(qg.QGroupBox):
+    """Sliders for changing camera exposure settings"""
+    def __init__(self, dirs):
+        super(GuiCameraConfigs, self).__init__('Camera Exposure Settings')
+        self.dirs = dirs
+        self.output_msgs = PROC_HANDLER_QUEUE
+        self.max_gain = 12.0
+        self.max_exposure = 62
+        self.max_shutter = 1000.0 / CAMERA_FRAMERATE
+        self.step_up_factor = 100.0
+        self.grid = qg.QGridLayout()
+        self.setLayout(self.grid)
+        self.init_widgets()
+
+    def send_message(self, cmd=None, val=None):
+        """Sends a message to process handler"""
+        msg = NewMessage(cmd=cmd, val=val)
+        self.output_msgs.put_nowait(msg)
+
+    def init_widgets(self):
+        """Sets up sliders and labels"""
+        exposure_label = qg.QLabel('Exposure:')
+        gain_label = qg.QLabel('Gain:')
+        shutter_label = qg.QLabel('Shutter:')
+        self.exposure_slider = qg.QSlider(qc.Qt.Horizontal)
+        self.gain_slider = qg.QSlider(qc.Qt.Horizontal)
+        self.shutter_slider = qg.QSlider(qc.Qt.Horizontal)
+        self.shutter_val_label = qg.QLabel('')
+        self.shutter_val_label.setMinimumWidth(35)
+        self.shutter_val_label.setMaximumWidth(35)
+        self.gain_val_label = qg.QLabel('')
+        self.gain_val_label.setMinimumWidth(35)
+        self.gain_val_label.setMaximumWidth(35)
+        exposure_val_label = qg.QLabel('')
+        exposure_val_label.setMaximumWidth(20)
+        exposure_val_label.setMinimumWidth(20)
+        shutter_ms_label = qg.QLabel('ms')
+        gain_db_label = qg.QLabel('dB')
+        # Connect Widgets
+        self.exposure_slider.valueChanged.connect(lambda val: self.slider_used(val, exposure_val_label))
+        self.gain_slider.valueChanged.connect(lambda val: self.slider_used(val, self.gain_val_label))
+        self.shutter_slider.valueChanged.connect(lambda val: self.slider_used(val, self.shutter_val_label))
+        self.exposure_slider.setMaximum(self.max_exposure)
+        self.gain_slider.setMaximum(self.max_gain * self.step_up_factor)
+        self.shutter_slider.setMaximum(self.max_shutter * self.step_up_factor)
+        self.exposure_slider.sliderReleased.connect(self.save_to_settings)
+        self.shutter_slider.sliderReleased.connect(self.save_to_settings)
+        self.gain_slider.sliderReleased.connect(self.save_to_settings)
+
+        # Set Values
+        self.exposure_slider.setValue(self.dirs.settings.exposure)
+        self.gain_slider.setValue(self.dirs.settings.gain)
+        self.shutter_slider.setValue(self.dirs.settings.shutter)
+        # Add to grid
+        self.grid.addWidget(exposure_label, 0, 0)
+        self.grid.addWidget(exposure_val_label, 0, 1)
+        self.grid.addWidget(self.exposure_slider, 0, 2)
+        self.grid.addWidget(gain_label, 0, 3)
+        self.grid.addWidget(self.gain_val_label, 0, 4)
+        self.grid.addWidget(gain_db_label, 0, 5)
+        self.grid.addWidget(self.gain_slider, 0, 6)
+        self.grid.addWidget(shutter_label, 0, 7)
+        self.grid.addWidget(self.shutter_val_label, 0, 8)
+        self.grid.addWidget(shutter_ms_label, 0, 9)
+        self.grid.addWidget(self.shutter_slider, 0, 10)
+
+    def slider_used(self, val, label):
+        """Gets value from slider"""
+        # Set Label Text
+        if label in [self.gain_val_label, self.shutter_val_label]:
+            val /= self.step_up_factor
+        label.setText(str(val))
+        # Send to Camera
+        values = (self.exposure_slider.value(),
+                  self.gain_slider.value()/self.step_up_factor,
+                  self.shutter_slider.value()/self.step_up_factor)
+        self.send_message(cmd=CMD_SET_CMR_CONFIGS, val=values)
+
+    def save_to_settings(self):
+        """Saves values to user settings"""
+        self.dirs.settings.exposure = self.exposure_slider.value()
+        self.dirs.settings.gain = self.gain_slider.value()
+        self.dirs.settings.shutter = self.shutter_slider.value()

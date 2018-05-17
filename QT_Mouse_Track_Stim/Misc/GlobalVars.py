@@ -3,6 +3,7 @@
 """Common Variables/Names used across modules"""
 
 import os
+from PyCapture2 import FRAMERATE
 import PyQt4.QtGui as qg
 import PyQt4.QtCore as qc
 import multiprocessing as mp
@@ -10,9 +11,11 @@ import multiprocessing as mp
 # Forbidden Chars that cannot be used in file naming
 FORBIDDEN_CHARS = ['<', '>', '*', '|', '?', '"', '/', ':', '\\']
 
+# Camera Framerate
+CAMERA_FRAMERATE = 30
+PYCAP_FRAMERATE = getattr(FRAMERATE, 'FR_{}'.format(CAMERA_FRAMERATE))
 # Camera Properties
 CAMERA = 'camera'
-CMR_FPS = 30
 VID_DIM = (480, 640)  # Rows, Cols
 VID_DIM_RGB = (480, 640, 3)  # Rows, Cols, RGB
 # CV2 Output Dimensions
@@ -47,6 +50,7 @@ CMD_SET_TIME = 'cmd_set_time'
 CMD_SET_DIRS = 'cmd_set_dirs'
 # Process Specific Commands
 CMD_SET_VIDSRC = 'cmd_set_vidsrc'
+CMD_SET_CMR_CONFIGS = 'cmd_set_cmr_configs'
 CMD_GET_BG = 'cmd_get_bg'
 CMD_CLR_MAPS = 'cmd_clr_maps'
 CMD_SET_BOUNDS = 'cmd_set_bounds'

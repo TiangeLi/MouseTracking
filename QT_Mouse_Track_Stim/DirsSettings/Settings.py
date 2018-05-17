@@ -14,16 +14,21 @@ class MainSettings(object):
         self.last_save_dir = ''
         self.ttl_time = 0.0
         # target area settings (areas that mouse will receive stimulation if within)
-        self.target_area_radius = 30
+        self.target_area_radius = 22
         self.last_targ_areas = None
         self.target_areas = {}
         self.last_quadrant = BOTTOMLEFT
         self.bounding_coords = DEFAULT_BOUNDS
+        # camera exposure settings
+        self.auto_exposure = True
+        self.gain = 0
+        self.exposure = 7
+        self.shutter = 0
 
     def load_examples(self):
         """Example settings for first time users"""
         self.last_save_dir = HOME_DIR + '\\Desktop\\MouseTracking'
-        self.ttl_time = 300.0  # in secs; 5min Default
+        self.ttl_time = 600.0  # in secs; 10 min Default
         self.last_targ_areas = TargetAreas(check_radius=False)
 
 

@@ -11,7 +11,7 @@ from Concurrency.CoordsProc import CoordinateProcessor
 from Concurrency.MainHandler import ProcessHandler
 from Concurrency.VidRecProc import VideoRecorder, CV2VideoRecorder
 from GUI.DataDisplays.MainContainer import DataDisplays
-from GUI.UserControls.ExpControls import GuiVideoOperations, GuiMainControls
+from GUI.UserControls.ExpControls import GuiVideoOperations, GuiMainControls, GuiCameraConfigs
 from Misc.GlobalVars import *
 from Misc.CustomClasses import NewMessage, ReadMessage
 from Misc.CustomFunctions import clear_console
@@ -99,6 +99,7 @@ class MasterGui(qg.QWidget):
                                           progbar_mp_array=self.coord_proc.progbar.mp_array)
         self.vid_cntrls = GuiVideoOperations(self.dirs)
         self.exp_cntrls = GuiMainControls(self.dirs)
+        self.cmr_cntrls = GuiCameraConfigs(self.dirs)
         # Connect Signals
         # Add to Grid
         self.grid.addWidget(self.vid_cntrls.recalib_frm, 0, 0)
@@ -106,6 +107,7 @@ class MasterGui(qg.QWidget):
         self.grid.addWidget(self.vid_cntrls.bounds_frm, 0, 2)
         self.grid.addWidget(self.data_displays, 1, 0, 1, 3)
         self.grid.addWidget(self.exp_cntrls, 0, 3, 2, 1)
+        self.grid.addWidget(self.cmr_cntrls, 2, 0, 1, 4)
 
     def connect_signals(self):
         """Connect signals to slots in separate child widgets"""
@@ -151,6 +153,7 @@ class MasterGui(qg.QWidget):
             self.data_displays.cmr_disp.indicators.targ_area_highlight.hide()
             self.exp_cntrls.curr_exp_config.name_entry.setEnabled(False)
             self.exp_cntrls.curr_exp_config.start_btn.setEnabled(False)
+            self.cmr_cntrls.setEnabled(False)
             self.send_message(cmd=CMD_START, val=trial_params)
         else:
             self.send_message(cmd=CMD_STOP)
@@ -177,6 +180,7 @@ class MasterGui(qg.QWidget):
             self.data_displays.cmr_disp.indicators.targ_area_highlight.show()
             self.exp_cntrls.curr_exp_config.name_entry.setEnabled(True)
             self.exp_cntrls.curr_exp_config.start_btn.setEnabled(True)
+            self.cmr_cntrls.setEnabled(True)
             self.exp_cntrls.curr_exp_config.start_btn.toggle_state('START')
             self.exp_running = False
             print('Finished Experiment')
@@ -270,3 +274,4 @@ if __name__ == '__main__':
     # Safely Exi App and Python
     print('Active Processes:', mp.active_children())
     sys.exit()
+

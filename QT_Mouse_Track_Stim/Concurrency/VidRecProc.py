@@ -100,11 +100,11 @@ class VideoRecorder(StoppableProcess):
         if record:
             fname = recording_params[0]
             duration = recording_params[1]
-            # Total frames to record at 30fps
-            self._ttl_num_frames = int(duration * CMR_FPS)
+            # Total frames to record at CAMERA_FRAMERATE
+            self._ttl_num_frames = int(duration * CAMERA_FRAMERATE)
             # setup video recorders
             self._video_writer = cv2.VideoWriter(fname + self.file_name_ending,
-                                                 cv2.VideoWriter_fourcc(*'XVID'), 30,
+                                                 cv2.VideoWriter_fourcc(*'XVID'), CAMERA_FRAMERATE,
                                                  self.output_dimensions, self.is_color)
             # Create worker thread
             self.frame_buffer.queue.clear()
