@@ -68,8 +68,8 @@ class CV2Processor(StoppableProcess):
         # CV2 Params
         self.num_calib_frames = 10
         self.accum_fn = np.mean
-        self.thresh = -50
-        self.tracking_size = 550.0
+        self.thresh = -15
+        self.tracking_size = 400.0
         self.opening_radius = 4
         # Init CV2 drawn objects
         self.targ_perim = None
@@ -198,6 +198,8 @@ class CV2Processor(StoppableProcess):
             self.has_background = True
             if len(self.bounding_coords) == 2:
                 self.crop_to_bounds(self.background)
+            # We send the new background to be saved at output
+            self.msg_proc_handler(cmd=CMD_NEW_BACKGROUND, val=(self.background, self.bg_original))
             # Reset Coords output
             self.reset_coords_output = True
 
@@ -312,6 +314,8 @@ class CV2Processor(StoppableProcess):
         else:
             self.bounding_coords = []
             self.background = self.bg_original.copy()
+        # We send the new background to be saved at output
+        self.msg_proc_handler(cmd=CMD_NEW_BACKGROUND, val=(self.background, self.bg_original))
 
     # Error Display
     def setup_error_img(self):

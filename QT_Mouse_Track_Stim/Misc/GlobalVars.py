@@ -53,6 +53,7 @@ CMD_SET_BOUNDS = 'cmd_set_bounds'
 CMD_SHOW_TRACKED = 'cmd_show_tracked'
 CMD_TARG_DRAW = 'cmd_targ_draw'
 CMD_TARG_RADIUS = 'cmd_targ_radius'
+CMD_NEW_BACKGROUND = 'cmd_new_background'
 # Queue Messages
 MSG_RECEIVED = 'msg_received'
 MSG_STARTED = 'msg_started'

@@ -2,6 +2,7 @@
 
 """Main Process Handler managing communication from GUI to all child processes"""
 
+import cv2
 import sys
 import time
 import multiprocessing as mp
@@ -22,6 +23,7 @@ class ProcessHandler(StoppableProcess):
         self.msg_rcvd_pipes = msg_rcvd_pipes
         self.vidrec_saving_list = []
         self.vidrec_finished_list = []
+        self.cv2_bg_w_boundary, self.cv2_bg_original = None, None
         self.queue_selector = {
             PROC_CMR: cmr_msgs,
             PROC_CV2: cv2_msgs,
@@ -56,6 +58,8 @@ class ProcessHandler(StoppableProcess):
             # Messages bound for GUI
             MSG_VIDREC_SAVING: lambda proc_origin, val: self.vidrec_saving(saving=True, proc_origin=proc_origin),
             MSG_VIDREC_FINISHED: lambda proc_origin, val: self.vidrec_saving(saving=False, proc_origin=proc_origin),
+            # Messages intended for Proc Handler
+            CMD_NEW_BACKGROUND: lambda dev, new_backgrounds: self.save_backgrounds(new_backgrounds),
         }
 
     def process_message(self, msg):
@@ -94,6 +98,9 @@ class ProcessHandler(StoppableProcess):
         # Start
         if run:
             self.exp_start_event.clear()
+            quality = int(cv2.IMWRITE_PNG_COMPRESSION), 0
+            cv2.imwrite('{}_bg_w_bounds.png'.format(trial_params[0]), self.cv2_bg_w_boundary, quality)
+            cv2.imwrite('{}_bg_original.png'.format(trial_params[0]), self.cv2_bg_original, quality)
             self.send_message(targets=(PROC_COORDS, PROC_CV2_VIDREC, PROC_CMR_VIDREC),
                               cmd=CMD_START,
                               val=trial_params)
@@ -108,6 +115,10 @@ class ProcessHandler(StoppableProcess):
             self.exp_start_event.clear()
             self.send_message(targets=(PROC_COORDS, PROC_CV2_VIDREC, PROC_CMR_VIDREC),
                               cmd=CMD_STOP)
+
+    def save_backgrounds(self, new_backgrounds):
+        """Saves backgrounds from cv2_proc for output into file"""
+        self.cv2_bg_w_boundary, self.cv2_bg_original = new_backgrounds
 
     def vidrec_saving(self, saving, proc_origin):
         """collects all CMD_VIDREC_SAVING and CMD_VIDREC_SAVED signals, then sends a single signal
