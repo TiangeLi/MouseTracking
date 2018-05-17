@@ -6,7 +6,7 @@ import sys
 import cv2
 import time
 from Misc.GlobalVars import VID_DIM
-import flycapture2a as fc
+import PyCapture2 as cap
 from Misc.GlobalVars import *
 from Misc.CustomClasses import *
 import threading as thr
@@ -16,23 +16,30 @@ else:
     import queue as Queue
 
 
-# todo: separate main thread and child thread variables. delineate read and write only
-class CameraDevice(fc.Context):
+class CameraDevice(cap.Camera):
     """Container for PTGrey FireFly Camera Hardware"""
     def __init__(self):
+        super(CameraDevice, self).__init__()
         self.running = False
         self.in_use = False
-        self.cmr_err = fc.ApiError
-        self.get_img = self.tempImgGet
+        self.cmr_err = cap.Fc2error
         self.connect_camera()
+
+    def get_img(self):
+        """Acquires image data from camera"""
+        img = self.retrieveBuffer()
+        img = img.getData()
+        img = img.reshape(VID_DIM)
+        return img
 
     def connect_camera(self):
         """Initializes a PTGrey FireFly Camera"""
         try:
-            self.connect(*self.get_camera_from_index(0))
-            self.set_video_mode_and_frame_rate(fc.VIDEOMODE_640x480Y8, fc.FRAMERATE_30)
-            self.set_property(**self.get_property(fc.FRAME_RATE))
-            self.start_capture()
+            bus = cap.BusManager()
+            cam_id = bus.getCameraFromIndex(0)
+            self.connect(cam_id)
+            self.setVideoModeAndFrameRate(cap.VIDEO_MODE.VM_640x480Y8, cap.FRAMERATE.FR_30)
+            self.startCapture()
         except self.cmr_err:
             self.running = False
         else:
@@ -42,7 +49,7 @@ class CameraDevice(fc.Context):
         """Closes Device and Exits Process"""
         self.running = False
         try:
-            self.stop_capture()
+            self.stopCapture()
             self.disconnect()
         except self.cmr_err:
             pass
