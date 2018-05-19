@@ -31,7 +31,7 @@ class ArduinoDevice(object):
     """Connects to external arduino hardware"""
     def __init__(self):
         self.main_pin = 'd:6:o'  # digital, pin 6, output
-        self.test_pin = 'd:13:o'  # use to Ping arduino for connection status
+        self.test_pin = 'd:13:o'  # ask arduino for connection status. Added benefit of seeing LED 13 as visual aid
         self.ping_state = 0
         self.connected = False
 

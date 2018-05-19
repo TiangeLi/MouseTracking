@@ -3,6 +3,7 @@
 """Common Variables/Names used across modules"""
 
 import os
+import struct
 from PyCapture2 import FRAMERATE
 import PyQt4.QtGui as qg
 import PyQt4.QtCore as qc
@@ -12,18 +13,22 @@ import multiprocessing as mp
 FORBIDDEN_CHARS = ['<', '>', '*', '|', '?', '"', '/', ':', '\\']
 
 # Camera Framerate
-CAMERA_FRAMERATE = 15
+CAMERA_FRAMERATE = 15  # the ONLY framerate number you have to change if editing fr
 PYCAP_FRAMERATE = getattr(FRAMERATE, 'FR_{}'.format(CAMERA_FRAMERATE))
+CAMERA_ABS_FRAMERATE_INT = struct.unpack('<I', struct.pack('<f', CAMERA_FRAMERATE))[0]
 # Hardware Registers
 # -- Writing Registers
 CMR_REG_BRIGHTNESS = int(0x800)
 CMR_REG_EXPOSURE = int(0x804)
 CMR_REG_SHUTTER = int(0x81C)
 CMR_REG_GAIN = int(0x820)
+CMR_REG_FRAMERATE = int(0x83C)
+CMR_REG_FRAMERATE_ABS = int(0x968)  # This is an Absolute Value Register! works differently from above regs
 # -- Convert Writing Register to Reading Register
 CMR_REG_READ_VALS = int(0x300)
 # -- Commonly used values
 CMR_SET_REG_MANUAL_LOW = int(0x82000000)  # Value that sets a register to Manual Control + LOW value
+CMR_SET_REG_ABS_MANUAL = int(0xC2000000)  # Sets register to accept Absolute Value control; manual control
 CMR_MAX_VALUE_MASK = int(0b111111111111)  # Mask that we apply to obtain last 12 digits from a binary num
 # Camera Properties
 CAMERA = 'camera'

@@ -54,6 +54,9 @@ class CameraDevice(cap.Camera):
 
     def set_properties(self):
         """Edit camera properties for better exposure control"""
+        # Set Frame Rate
+        self.writeRegister(CMR_REG_FRAMERATE, CMR_SET_REG_ABS_MANUAL)
+        self.writeRegister(CMR_REG_FRAMERATE_ABS, CAMERA_ABS_FRAMERATE_INT)
         # Read register and apply a mask on last 12 digits to obtain max value
         bright_max = self.readRegister(CMR_REG_BRIGHTNESS - CMR_REG_READ_VALS) & CMR_MAX_VALUE_MASK
         exposure_max = self.readRegister(CMR_REG_EXPOSURE - CMR_REG_READ_VALS) & CMR_MAX_VALUE_MASK
