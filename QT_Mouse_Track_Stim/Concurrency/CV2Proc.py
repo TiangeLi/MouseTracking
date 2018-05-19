@@ -18,10 +18,6 @@ else:
     import queue as Queue
 
 
-# todo: separate main thread and child thread variables. delineate read and write only
-# also todo: unlock cv2 processing from main gui's ability to accept images
-#      todo: process all images regardless, and send images to gui when available
-#      todo: this way, all images possible are processed.
 class CV2TargetAreaPerimeter(object):
     """Container for target area perimeter information"""
     def __init__(self):
@@ -68,8 +64,8 @@ class CV2Processor(StoppableProcess):
         # CV2 Params
         self.num_calib_frames = 10
         self.accum_fn = np.mean
-        self.thresh = -15
-        self.tracking_size = 400.0
+        self.thresh = -30
+        self.tracking_size = 350.0
         self.opening_radius = 4
         # Init CV2 drawn objects
         self.targ_perim = None

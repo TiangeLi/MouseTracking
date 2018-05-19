@@ -20,12 +20,11 @@ class CameraDevice(cap.Camera):
     """Container for PTGrey FireFly Camera Hardware"""
     def __init__(self):
         super(CameraDevice, self).__init__()
-        self.running = False
-        self.in_use = False
+        self.running = False  # is the camera working
+        self.in_use = False  # are we using the camera or a saved video as source
+        # Hardware attributes
         self.cmr_err = cap.Fc2error
-        self.exposure = 0
-        self.gain = 0
-        self.shutter = 0
+        # Finalize init
         self.connect_camera()
         time.sleep(50.0 / 1000.0)
 
@@ -38,22 +37,33 @@ class CameraDevice(cap.Camera):
 
     def connect_camera(self):
         """Initializes a PTGrey FireFly Camera"""
+        # Close any existing camera connections
+        self.close_camera()
+        # Try to connect
         try:
             bus = cap.BusManager()
             cam_id = bus.getCameraFromIndex(0)
             self.connect(cam_id)
             self.setVideoModeAndFrameRate(cap.VIDEO_MODE.VM_640x480Y8, PYCAP_FRAMERATE)
+            self.set_properties()
             self.startCapture()
         except self.cmr_err:
             self.running = False
         else:
             self.running = True
 
-    def set_properties(self, auto=False):
+    def set_properties(self):
         """Edit camera properties for better exposure control"""
-        self.setProperty(type=cap.PROPERTY_TYPE.AUTO_EXPOSURE, autoManualMode=auto, valueA=self.exposure)
-        self.setProperty(type=cap.PROPERTY_TYPE.GAIN, autoManualMode=auto, absValue=self.gain)
-        self.setProperty(type=cap.PROPERTY_TYPE.SHUTTER, autoManualMode=auto, absValue=self.shutter)
+        # Read register and apply a mask on last 12 digits to obtain max value
+        bright_max = self.readRegister(CMR_REG_BRIGHTNESS - CMR_REG_READ_VALS) & CMR_MAX_VALUE_MASK
+        exposure_max = self.readRegister(CMR_REG_EXPOSURE - CMR_REG_READ_VALS) & CMR_MAX_VALUE_MASK
+        shutter_max = self.readRegister(CMR_REG_SHUTTER - CMR_REG_READ_VALS) & CMR_MAX_VALUE_MASK
+        gain_max = self.readRegister(CMR_REG_GAIN - CMR_REG_READ_VALS) & CMR_MAX_VALUE_MASK
+        # Write max values to registers
+        self.writeRegister(CMR_REG_BRIGHTNESS, CMR_SET_REG_MANUAL_LOW | bright_max)
+        self.writeRegister(CMR_REG_EXPOSURE, CMR_SET_REG_MANUAL_LOW | exposure_max)
+        self.writeRegister(CMR_REG_SHUTTER, CMR_SET_REG_MANUAL_LOW | shutter_max)
+        self.writeRegister(CMR_REG_GAIN, CMR_SET_REG_MANUAL_LOW | gain_max)
 
     def close_camera(self):
         """Closes Device and Exits Process"""
@@ -101,8 +111,6 @@ class CameraHandler(StoppableProcess):
         self.rec_to_file_sync_event = mp.Event()
         # Sometimes, we need to tell CV2_Proc To calibrate a new background
         self.get_background = False
-        # Sometimes we need to update camera exposure
-        self.update_cmr_exposure = False
 
     def run(self):
         """This is called by self.start(), and creates a new process"""
@@ -129,10 +137,6 @@ class CameraHandler(StoppableProcess):
                 self.get_background = False
                 self.get_frames()  # Therefore, this get_frames() will acquire an image with new vidsrc
                 self.msg_proc_handler(cmd=CMD_GET_BG)  # cv2 will acquire bg using only new vidsrc images
-            # Sometimes we may be asked to update camera exposure settings
-            if self.update_cmr_exposure:
-                self.update_cmr_exposure = False
-                self.camera.set_properties()
             # Check if exiting process
             if self.stopped():
                 self.connected = False
@@ -149,8 +153,7 @@ class CameraHandler(StoppableProcess):
         """Dictionary of {Msg:Actions}"""
         self.msg_parser = {
             CMD_EXIT: lambda val: self.stop(),
-            CMD_SET_VIDSRC: lambda val: self.toggle_vid_src(val),
-            CMD_SET_CMR_CONFIGS: lambda vals: self.update_exposure_settings(vals)
+            CMD_SET_VIDSRC: lambda val: self.toggle_vid_src(val)
         }
 
     def msg_proc_handler(self, cmd, val=None):
@@ -180,11 +183,6 @@ class CameraHandler(StoppableProcess):
         self.vidsrc = VideoSource()
         self.cmr_cv2_np_array = self.cmr_cv2_mp_array.generate_np_array()
         self.setup_msg_parser()
-
-    def update_exposure_settings(self, values):
-        """Updates exposure, gain, shutter speed"""
-        self.camera.exposure, self.camera.gain, self.camera.shutter = values
-        self.update_cmr_exposure = True
 
     def toggle_vid_src(self, vidpath):
         """Switch between using camera and a video file"""
