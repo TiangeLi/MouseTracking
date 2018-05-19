@@ -2,6 +2,7 @@
 
 """Experiment Controls for User Settings"""
 
+import os
 from copy import deepcopy
 import numpy as np
 import PyQt4.QtGui as qg
@@ -392,7 +393,9 @@ class GuiStartStopControls(qg.QGroupBox):
             if not self.dirs.made_date_stamped_dir:
                 self.dirs.create_date_stamped_dir()
             # Start Experiment
-            name = r'{}/[{}]'.format(self.dirs.date_stamped_dir, name)
+            directory = r'{}/[{}]'.format(self.dirs.date_stamped_dir, name)
+            os.makedirs(directory)
+            name = r'{}/[{}]'.format(directory, name)
             duration = self.dirs.settings.ttl_time
             params = name, duration
             self.expStartedSignal.emit(True, params)
