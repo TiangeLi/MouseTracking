@@ -27,11 +27,14 @@ STIM_ON = 0.4
 STIM_TOTAL = 1.0
 
 
+# todo: change self.port to be more flexible instead of a hardcoded port
 class ArduinoDevice(object):
     """Connects to external arduino hardware"""
     def __init__(self):
-        self.port = 'COM1'
-        self.pin = 'd:6:o'  # digital, pin 13, output
+        self.port = 'COM4'
+        self.main_pin = 'd:6:o'  # digital, pin 6, output
+        self.test_pin = 'd:13:o'  # use to Ping arduino for connection status
+        self.ping_state = 0
         self.connected = False
 
     def connect(self):
@@ -54,13 +57,14 @@ class ArduinoDevice(object):
                     temp2.flush()
                     temp2.close()
         else:
-            self.serial_output = self.board.get_pin(self.pin)
+            self.main_output = self.board.get_pin(self.main_pin)
+            self.test_output = self.board.get_pin(self.test_pin)
             self.connected = True
 
     def write(self, num):
         """Writes to arduino while handling any serial errors"""
         try:
-            self.serial_output.write(num)
+            self.main_output.write(num)
         except (serial.serialutil.SerialTimeoutException, serial.serialutil.SerialException, AttributeError):
             self.connected = False
 
@@ -70,6 +74,14 @@ class ArduinoDevice(object):
             self.board.exit()
         except (serial.serialutil.SerialException, serial.serialutil.SerialTimeoutException, AttributeError):
             pass
+
+    def ping(self):
+        """test if arduino is still connected"""
+        try:
+            self.ping_state ^= 1
+            self.test_output.write(self.ping_state)
+        except (serial.serialutil.SerialTimeoutException, serial.serialutil.SerialException, AttributeError):
+            self.connected = False
 
 
 class ProgressBar(object):
@@ -130,7 +142,8 @@ class ProgressBar(object):
         self.targ_count_slice = self.image[92-h:92+5, 256:256+int(w*3/4), :]
         self.stim_count_slice = self.image[92-h:92+5, 563:563+int(w*3/4), :]
         # Arduino object
-        cv2.putText(self.output_array, 'LOADING DEVICES...', (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 2, (255, 255, 255), 2)
+        cv2.putText(self.output_array, 'CONNECTING TO ARDUINO...', (30, 63),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1.3, (255, 255, 255), 1)
         self.output_array.set_can_recv_img()
         self.arduino = ArduinoDevice()
         self.arduino.connect()  # this step takes a few seconds
@@ -228,7 +241,13 @@ class ProgressBar(object):
         self.mouse_n_entries = 0
         self.mouse_n_stims = 0
         self.mouse_stim_timer = None
-        # Reset Progress Bar
+        # Reset Progress Bar Image
+        self.reset_progbar_img()
+        # Send Image
+        self.output_array.set_can_recv_img()
+
+    def reset_progbar_img(self):
+        """Reset progressbar to initial image"""
         self.image.fill(0)
         # Add new progress bar at origin
         self.pbar_slice[:, :1, :] = 255
@@ -241,9 +260,9 @@ class ProgressBar(object):
         time_chunk = (self._duration / num_chunks)
         for i in np.arange(1, num_chunks):
             loc = seg_size * i
-            tloc = format_secs(time_chunk*i)
-            self.image[62:65, loc-1:loc, :] = 255
-            cv2.putText(self.image, tloc, (loc-15, 74), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255, 255, 255))
+            tloc = format_secs(time_chunk * i)
+            self.image[62:65, loc - 1:loc, :] = 255
+            cv2.putText(self.image, tloc, (loc - 15, 74), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255, 255, 255))
         # Add legends
         self.image[79:96, 319:320, :] = 255
         self.image[80:95, 3:18, 1] = 255
@@ -254,7 +273,6 @@ class ProgressBar(object):
         cv2.putText(self.image, '(# Stims:', (491, 92), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255))
         # add initializing timer text
         self.set_timer_text(reset=True)
-        self.output_array.set_can_recv_img()
 
     def can_update(self):
         """Checks we are allowed to proceed"""
@@ -296,14 +314,20 @@ class ProgressBar(object):
             if self.txt_left_lmt <= loc <= self.txt_right_lmt:
                 self.text_hloc = loc - self.txt_left_lmt
             self.curr_loc = loc
-        # Update Text and send img if can be received
+        # Test for arduino connection; send new progbar frame; attempt to reconnect lost devices
+        self.ping_arduino(updating=True)
+
+    def ping_arduino(self, updating):
+        """Pings arduino, displays errors, attempt to reconnect"""
         if self.output_array.can_send_img():
             if not self.arduino.connected:
                 self.output_array.fill(0)
                 cv2.putText(self.output_array, 'ARDUINO ERROR. RECONNECT DEVICE', (10, 60), cv2.FONT_HERSHEY_SIMPLEX,
                             1, (255, 255, 255), 2)
-            else:
+            elif updating:
                 self.set_timer_text(reset=False)
+            elif not updating:
+                self.reset_progbar_img()
             self.output_array.set_can_recv_img()
         if not self.arduino.connected:
             self.arduino.connect()
@@ -695,9 +719,12 @@ class CoordinateProcessor(StoppableProcess):
                 self.heatmap.output_array.set_can_recv_img()
                 self.pathing.output_array.set_can_recv_img()
                 self.gradient.output_array.set_can_recv_img()
+            # Ping arduino hardware to make sure still connected
+            self.progbar.arduino.ping()
         # We update progress bar regardless if there were new coordinates available
         # Update Progress Bar; if mouse inside target region, we determine if should stimulate
         if not self.progbar.can_update():
+            self.progbar.ping_arduino(updating=False)
             if not self.coords_saved:
                 self.coords_saved = True
                 self.save_coords()
