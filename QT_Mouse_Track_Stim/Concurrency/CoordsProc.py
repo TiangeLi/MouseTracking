@@ -27,11 +27,9 @@ STIM_ON = 0.4
 STIM_TOTAL = 1.0
 
 
-# todo: change self.port to be more flexible instead of a hardcoded port
 class ArduinoDevice(object):
     """Connects to external arduino hardware"""
     def __init__(self):
-        self.port = 'COM4'
         self.main_pin = 'd:6:o'  # digital, pin 6, output
         self.test_pin = 'd:13:o'  # use to Ping arduino for connection status
         self.ping_state = 0
@@ -39,27 +37,31 @@ class ArduinoDevice(object):
 
     def connect(self):
         """Attempts to connect to the device"""
-        try:
-            temp1 = serial.Serial(self.port)
-            temp1.flush()
-            temp1.close()
-            self.board = Arduino(self.port)
-        except serial.serialutil.SerialException:
-            self.connected = False
+        self.connected = False
+        for port in range(1, 256+1):
+            port = 'COM{}'.format(port)
             try:
-                self.board.exit()
-            except AttributeError:
+                temp1 = serial.Serial(port)
+                temp1.flush()
+                temp1.close()
+                self.board = Arduino(port)
+            except serial.serialutil.SerialException:
                 try:
-                    temp2 = serial.Serial(self.port)
-                except serial.serialutil.SerialException:
-                    pass
-                else:
-                    temp2.flush()
-                    temp2.close()
-        else:
-            self.main_output = self.board.get_pin(self.main_pin)
-            self.test_output = self.board.get_pin(self.test_pin)
-            self.connected = True
+                    self.board.exit()
+                except AttributeError:
+                    try:
+                        temp2 = serial.Serial(port)
+                    except serial.serialutil.SerialException:
+                        pass
+                    else:
+                        temp2.flush()
+                        temp2.close()
+            else:
+                self.main_output = self.board.get_pin(self.main_pin)
+                self.test_output = self.board.get_pin(self.test_pin)
+                print('Arduino Port Found at: {}'.format(port))
+                self.connected = True
+                break
 
     def write(self, num):
         """Writes to arduino while handling any serial errors"""
