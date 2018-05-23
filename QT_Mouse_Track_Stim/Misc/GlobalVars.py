@@ -73,6 +73,8 @@ CMD_SHOW_TRACKED = 'cmd_show_tracked'
 CMD_TARG_DRAW = 'cmd_targ_draw'
 CMD_TARG_RADIUS = 'cmd_targ_radius'
 CMD_NEW_BACKGROUND = 'cmd_new_background'
+CMD_TOGGLE_MANUAL_TRIGGER = 'cmd_toggle_manual_trigger'
+CMD_SEND_STIMULUS = 'cmd_send_stimulus'
 # Queue Messages
 MSG_RECEIVED = 'msg_received'
 MSG_STARTED = 'msg_started'

@@ -25,6 +25,9 @@ else:
 # Stimulate mouse for STIM_ON seconds every STIM_TOTAL seconds
 STIM_ON = 0.4
 STIM_TOTAL = 1.0
+# Thread names
+POLLING = 'polling'
+SEND_SIGNAL = 'send_signal'
 
 
 class ArduinoDevice(object):
@@ -33,6 +36,7 @@ class ArduinoDevice(object):
         self.main_pin = 'd:6:o'  # digital, pin 6, output
         self.test_pin = 'd:13:o'  # ask arduino for connection status. Added benefit of seeing LED 13 as visual aid
         self.ping_state = 0
+        self.manual_mode = False
         self.connected = False
 
     def connect(self):
@@ -62,6 +66,21 @@ class ArduinoDevice(object):
                 print('Arduino Port Found at: {}'.format(port))
                 self.connected = True
                 break
+
+    def toggle_manual(self):
+        """Turns manual mode on or off"""
+        self.manual_mode = not self.manual_mode
+
+    def __send_signal__(self):
+        """Sends a pulse"""
+        self.write(1)
+        time.sleep(STIM_ON)
+        self.write(0)
+
+    def send_signal(self):
+        """Sends a pulse using a worker thread"""
+        thread = thr.Thread(target=self.__send_signal__, daemon=True, name=SEND_SIGNAL)
+        thread.start()
 
     def write(self, num):
         """Writes to arduino while handling any serial errors"""
@@ -280,7 +299,6 @@ class ProgressBar(object):
         """Checks we are allowed to proceed"""
         finished = self.curr_loc >= self.num_steps
         if finished or not self._running:
-            self.arduino.write(0)
             return False
         return True
 
@@ -304,11 +322,11 @@ class ProgressBar(object):
             if not self.get_stim_stopwatch.started:
                 self.mouse_n_stims += 1
                 self.get_stim_stopwatch.start()
-                self.arduino.write(1)
+                if not self.arduino.manual_mode:
+                    self.arduino.send_signal()
         else:
             if self.get_stim_stopwatch.started:
                 self.get_stim_stopwatch.stop()
-                self.arduino.write(0)
         # If enough time elapsed, update current location to expected location
         if loc != self.curr_loc:
             self.pbar_slice[:, self.curr_loc - 1:self.curr_loc, :] = 0
@@ -627,6 +645,8 @@ class CoordinateProcessor(StoppableProcess):
             CMD_CLR_MAPS: lambda val: self.reset_maps(),
             CMD_TARG_DRAW: lambda params: self.progbar.targ_perim.toggle_draw(params),
             CMD_TARG_RADIUS: lambda radius: self.progbar.targ_perim.update_radius(radius),
+            CMD_TOGGLE_MANUAL_TRIGGER: lambda val: self.progbar.arduino.toggle_manual(),
+            CMD_SEND_STIMULUS: lambda val: self.progbar.arduino.send_signal()
         }
 
     # Message read/write/process functions. CALL IN CHILD THREADS
@@ -681,7 +701,6 @@ class CoordinateProcessor(StoppableProcess):
         """Call using start(); spawns new process"""
         self.init_unpickleable_objs()
         # Threading
-        POLLING = 'polling'
         thr_msg_polling = thr.Thread(target=self.msg_polling, name=POLLING, daemon=True)
         thr_msg_polling.start()
         # Main Process Loop
@@ -696,7 +715,7 @@ class CoordinateProcessor(StoppableProcess):
                 while True:
                     time.sleep(5.0 / 1000.0)
                     threads = [thread.name for thread in thr.enumerate()]
-                    if POLLING not in threads:
+                    if POLLING not in threads and SEND_SIGNAL not in threads:
                         break
         print('Exiting Coordinate Processor...')
 

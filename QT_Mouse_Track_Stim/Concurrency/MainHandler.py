@@ -55,6 +55,9 @@ class ProcessHandler(StoppableProcess):
             CMD_SET_VIDSRC: lambda dev, fname: self.send_message(targets=(PROC_CMR,), cmd=CMD_SET_VIDSRC, val=fname),
             # Messages bound for Coords Process
             CMD_CLR_MAPS: lambda dev, val: self.send_message(targets=(PROC_COORDS,), cmd=CMD_CLR_MAPS),
+            CMD_TOGGLE_MANUAL_TRIGGER: lambda d, v: self.send_message(targets=(PROC_COORDS,),
+                                                                      cmd=CMD_TOGGLE_MANUAL_TRIGGER),
+            CMD_SEND_STIMULUS: lambda d, v: self.send_message(targets=(PROC_COORDS,), cmd=CMD_SEND_STIMULUS),
             # Messages bound for GUI
             MSG_VIDREC_SAVING: lambda proc_origin, val: self.vidrec_saving(saving=True, proc_origin=proc_origin),
             MSG_VIDREC_FINISHED: lambda proc_origin, val: self.vidrec_saving(saving=False, proc_origin=proc_origin),

@@ -479,10 +479,15 @@ class GuiVideoOperations(qg.QWidget):
                                         flipped_msg='Show Full Image')
         self.flip_crop_btn.permit_use = False if self.dirs.settings.bounding_coords == DEFAULT_BOUNDS else True
         self.flip_crop_btn.setEnabled(self.flip_crop_btn.permit_use)
+        self.enable_manual_btn = GuiFlipBtn(default_msg='Turn On Manual Mode', default_color=qBgCyan,
+                                            flipped_msg='Turn Off Manual Mode', flipped_color=qBgOrange)
+        self.send_stim_btn = qg.QPushButton('Send Stimulus')
+        self.send_stim_btn.setEnabled(False)
         # Gridding
         self.recalib_frm = GuiSimpleFrame('Calibrate Video')
         self.vidsrc_frm = GuiSimpleFrame('Video Source')
         self.bounds_frm = GuiSimpleFrame('Create Bounds')
+        self.manual_frm = GuiSimpleFrame('Manual Mode')
         self.recalib_frm.addWidget(self.clr_maps_btn)
         self.recalib_frm.addWidget(self.get_bg_btn)
         self.vidsrc_frm.addWidget(self.use_cmr_btn)
@@ -490,6 +495,8 @@ class GuiVideoOperations(qg.QWidget):
         self.bounds_frm.addWidget(self.reset_bnds_btn, 0, 0)
         self.bounds_frm.addWidget(self.get_bnds_btn, 0, 1, 1, 2)
         self.bounds_frm.addWidget(self.flip_crop_btn, 1, 0, 1, 3)
+        self.manual_frm.addWidget(self.enable_manual_btn)
+        self.manual_frm.addWidget(self.send_stim_btn)
         # Internal signal/slot connecting
         self.flip_crop_btn.clicked.connect(self.toggle_show_cropped)
         self.get_bnds_btn.clicked.connect(self.enable_disable_btns)
@@ -498,6 +505,8 @@ class GuiVideoOperations(qg.QWidget):
         self.get_bg_btn.clicked.connect(lambda: self.send_message(cmd=CMD_GET_BG))
         self.clr_maps_btn.clicked.connect(lambda: self.send_message(cmd=CMD_CLR_MAPS))
         self.reset_bnds_btn.clicked.connect(self.disable_flip_crop_btn)
+        self.enable_manual_btn.clicked.connect(self.toggle_manual_mode)
+        self.send_stim_btn.clicked.connect(self.send_stimulus)
 
     def send_message(self, cmd=None, val=None):
         """Sends a message to process handler"""
@@ -519,8 +528,9 @@ class GuiVideoOperations(qg.QWidget):
 
     def enable_disable_btns(self):
         """Enable/Disable widgets depending on if getting bounds"""
-        for widget in self.recalib_frm, self.vidsrc_frm:
+        for widget in self.recalib_frm, self.vidsrc_frm, self.manual_frm:
             widget.setEnabled(not widget.isEnabled())
+        self.reset_bnds_btn.setEnabled(not self.reset_bnds_btn.isEnabled())
         if self.flip_crop_btn.permit_use:
             self.flip_crop_btn.setEnabled(not self.flip_crop_btn.isEnabled())
         self.get_bnds_btn.toggle_state()
@@ -539,3 +549,13 @@ class GuiVideoOperations(qg.QWidget):
         else:
             fname = ''
         self.send_message(cmd=CMD_SET_VIDSRC, val=fname)
+
+    def toggle_manual_mode(self):
+        """Turns manual mode on or off"""
+        self.enable_manual_btn.toggle_state()
+        self.send_message(cmd=CMD_TOGGLE_MANUAL_TRIGGER)
+        self.send_stim_btn.setEnabled(not self.send_stim_btn.isEnabled())
+
+    def send_stimulus(self):
+        """Sends a manual stimulus to arduino"""
+        self.send_message(cmd=CMD_SEND_STIMULUS)

@@ -104,8 +104,9 @@ class MasterGui(qg.QWidget):
         self.grid.addWidget(self.vid_cntrls.recalib_frm, 0, 0)
         self.grid.addWidget(self.vid_cntrls.vidsrc_frm, 0, 1)
         self.grid.addWidget(self.vid_cntrls.bounds_frm, 0, 2)
-        self.grid.addWidget(self.data_displays, 1, 0, 1, 3)
-        self.grid.addWidget(self.exp_cntrls, 0, 3, 2, 1)
+        self.grid.addWidget(self.vid_cntrls.manual_frm, 0, 3)
+        self.grid.addWidget(self.data_displays, 1, 0, 1, 4)
+        self.grid.addWidget(self.exp_cntrls, 0, 4, 2, 1)
 
     def connect_signals(self):
         """Connect signals to slots in separate child widgets"""

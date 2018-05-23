@@ -62,7 +62,7 @@ class CV2Processor(StoppableProcess):
         self.show_only_tracked_space = False
         self.contrail_coords = deque(maxlen=32)
         # CV2 Params
-        self.num_calib_frames = 100
+        self.num_calib_frames = 20
         self.accum_fn = np.mean
         self.thresh = -30
         self.tracking_size = 350.0
@@ -185,6 +185,7 @@ class CV2Processor(StoppableProcess):
             blank = np.zeros(shape=VID_DIM_RGB, dtype=np.uint8)
             fnum = -1
             # Start acquiring background
+            acq_start = time.perf_counter()
             while not len(bg) >= self.num_calib_frames:
                 if len(bg) > fnum:
                     fnum_frame = blank.copy()
@@ -197,6 +198,9 @@ class CV2Processor(StoppableProcess):
                     self.input_array.set_can_send_img()
                 else:
                     time.sleep(3.0 / 1000.0)
+            print('Background Acquired in {} '
+                  'Seconds for {} Frames at '
+                  '{} FPS.'.format(round(time.perf_counter()-acq_start, 2), self.num_calib_frames, CAMERA_FRAMERATE))
             bg = np.array(bg)
             self.background = self.accum_fn(bg, axis=0)
             self.bg_original = self.background.copy()
