@@ -62,7 +62,7 @@ class CV2Processor(StoppableProcess):
         self.show_only_tracked_space = False
         self.contrail_coords = deque(maxlen=32)
         # CV2 Params
-        self.num_calib_frames = 10
+        self.num_calib_frames = 100
         self.accum_fn = np.mean
         self.thresh = -30
         self.tracking_size = 350.0
@@ -179,10 +179,19 @@ class CV2Processor(StoppableProcess):
     def acquire_background(self):
         """Gets background to compare mouse motion against"""
         if not self.has_background:
-            print('Recalibrating Tracking Background...')
             self.contrail_coords.clear()
             bg = deque(maxlen=self.num_calib_frames)
+            # Create blank images to send to display
+            blank = np.zeros(shape=VID_DIM_RGB, dtype=np.uint8)
+            fnum = -1
+            # Start acquiring background
             while not len(bg) >= self.num_calib_frames:
+                if len(bg) > fnum:
+                    fnum_frame = blank.copy()
+                    cv2.putText(fnum_frame, 'Acquiring Background ({}/{})'.format(len(bg) + 1, self.num_calib_frames),
+                                (60, 250), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 3)
+                    self.frame_buffer.put_nowait(fnum_frame)
+                    fnum += 1
                 if self.input_array.can_recv_img():
                     bg.append(self.image_iterator())
                     self.input_array.set_can_send_img()
